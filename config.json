@@ -1,6 +1,6 @@
 {
-    "label": "RetroRead",
+    "label": "RetroComics",
     "icon": "icon.png",
     "launch": "launch.sh",
-    "description": "A comfortable text and EPUB reader for your books and notes."
+    "description": "A comfortable comic reader for CBZ archives."
 }

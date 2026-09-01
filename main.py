@@ -5,24 +5,24 @@ import traceback
 import json
 import re
 
-SAVES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves.json")
-SETTINGS_KEY = "__retroread_settings__"
+SAVES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "comic_saves.json")
+SETTINGS_KEY = "__retrocomics_settings__"
 
 def load_save(filepath):
     try:
         with open(SAVES_FILE, 'r') as f:
             saves = json.load(f)
-        return saves.get(filepath, {"scroll_y": 0, "font_size": 34})
+        return saves.get(filepath, {"scroll_y": 0, "font_size": 34, "view_mode": 0})
     except:
-        return {"scroll_y": 0, "font_size": 34}
+        return {"scroll_y": 0, "font_size": 34, "view_mode": 0}
 
-def write_save(filepath, scroll_y, font_size):
+def write_save(filepath, scroll_y, font_size, view_mode=0):
     try:
         saves = {}
         if os.path.exists(SAVES_FILE):
             with open(SAVES_FILE, 'r') as f:
                 saves = json.load(f)
-        saves[filepath] = {"scroll_y": scroll_y, "font_size": font_size}
+        saves[filepath] = {"scroll_y": scroll_y, "font_size": font_size, "view_mode": view_mode}
         with open(SAVES_FILE, 'w') as f:
             json.dump(saves, f)
     except:
@@ -39,6 +39,7 @@ try:
     import sdl2
     import sdl2.ext
     import sdl2.sdlttf as sdlttf
+    import sdl2.sdlimage as sdlimage
 except ImportError as e:
     sys.stderr.write("Cannot load SDL2. Error: " + str(e))
     sys.exit(1)
@@ -50,13 +51,6 @@ SCREEN_H = 768
 
 # Themes
 THEMES = [
-    {
-        "name": "Paper (Vintage)",
-        "bg": sdl2.ext.Color(40, 30, 20),         # Dark brown background
-        "text": sdl2.SDL_Color(235, 213, 171, 255), # EBD5AB text
-        "header": sdl2.ext.Color(30, 20, 15),
-        "sel": sdl2.ext.Color(139, 69, 19)
-    },
     {
         "name": "Night Mode",
         "bg": sdl2.ext.Color(23, 25, 28),         # 17191C
@@ -70,24 +64,11 @@ THEMES = [
         "text": sdl2.SDL_Color(51, 48, 43, 255),  # 33302B
         "header": sdl2.ext.Color(230, 225, 210),
         "sel": sdl2.ext.Color(118, 107, 90)
-    },
-    {
-        "name": "Warm Night Light",
-        "bg": sdl2.ext.Color(243, 231, 199),
-        "text": sdl2.SDL_Color(61, 52, 40, 255),
-        "header": sdl2.ext.Color(230, 213, 173),
-        "sel": sdl2.ext.Color(216, 185, 110)
     }
 ]
 
 # Library-only palette.  The reader keeps its existing themes and rendering.
 LIBRARY_THEMES = [
-    {
-        "bg": sdl2.ext.Color(40, 30, 20), "header": sdl2.ext.Color(30, 20, 15),
-        "text": sdl2.SDL_Color(235, 213, 171, 255), "secondary": sdl2.SDL_Color(184, 159, 118, 255),
-        "accent": sdl2.ext.Color(210, 149, 93), "selected": sdl2.ext.Color(63, 46, 32),
-        "border": sdl2.ext.Color(139, 69, 19), "divider": sdl2.ext.Color(76, 56, 39),
-    },
     {
         "bg": sdl2.ext.Color(20, 20, 20), "header": sdl2.ext.Color(10, 10, 10),
         "text": sdl2.SDL_Color(212, 212, 212, 255), "secondary": sdl2.SDL_Color(154, 154, 154, 255),
@@ -99,13 +80,7 @@ LIBRARY_THEMES = [
         "text": sdl2.SDL_Color(59, 52, 40, 255), "secondary": sdl2.SDL_Color(118, 107, 90, 255),
         "accent": sdl2.ext.Color(107, 91, 149), "selected": sdl2.ext.Color(229, 235, 241),
         "border": sdl2.ext.Color(102, 137, 181), "divider": sdl2.ext.Color(204, 193, 171),
-    },
-    {
-        "bg": sdl2.ext.Color(243, 231, 199), "header": sdl2.ext.Color(230, 213, 173),
-        "text": sdl2.SDL_Color(61, 52, 40, 255), "secondary": sdl2.SDL_Color(117, 104, 84, 255),
-        "accent": sdl2.ext.Color(168, 120, 40), "selected": sdl2.ext.Color(216, 185, 110),
-        "border": sdl2.ext.Color(216, 197, 157), "divider": sdl2.ext.Color(216, 197, 157),
-    },
+    }
 ]
 
 def load_theme_idx():
@@ -154,13 +129,14 @@ STATE_BROWSE = 0
 STATE_READER = 1
 STATE_TOC = 2
 STATE_QUIT_CONFIRM = 3
+STATE_PAGE_SELECT = 4
 
 def get_directory_contents(path):
     try:
         items = os.listdir(path)
         folders = []
         files = []
-        valid_exts = ['.txt', '.md', '.log', '.csv', '.json', '.epub', '.fb2', '.mobi', '.azw', '.azw3']
+        valid_exts = ['.cbz', '.zip']
         for item in items:
             full_path = os.path.join(path, item)
             if os.path.isdir(full_path):
@@ -188,186 +164,43 @@ def get_book_display_metadata(filename):
     return title.strip(), author
 
 def draw_book_icon(renderer, x, y, color, background):
-    """Small pixel-friendly book glyph, deliberately free of emoji assets."""
-    renderer.fill((x, y, 15, 20), color)
-    renderer.fill((x + 3, y + 3, 2, 14), background)
+    renderer.fill((x, y, 28, 36), color)
+    renderer.fill((x + 6, y + 5, 4, 26), background)
 
-class Chapter:
-    def __init__(self, title, content):
-        self.title = title
-        self.content = content
+import zipfile
+import io
+import re
+def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
+    return [int(text) if text.isdigit() else text.lower() for text in _nsre.split(s)]
 
 class Book:
-    def __init__(self, title="", author="", filepath=""):
+    def __init__(self, title="", filepath=""):
         self.title = title
-        self.author = author
         self.filepath = filepath
-        self.chapters = []
-        self.metadata = {}
+        self.pages = [] # List of image filenames inside the zip
 
-class EPUBParser:
+class CBZParser:
     @staticmethod
     def parse(filepath) -> Book:
-        import zipfile
-        import xml.etree.ElementTree as ET
-        import html
-        import re
-        
         book = Book(filepath=filepath)
-        with zipfile.ZipFile(filepath, 'r') as zf:
-            container_xml = zf.read('META-INF/container.xml')
-            root = ET.fromstring(container_xml)
-            opf_path = ""
-            for child in root.iter():
-                if child.tag.endswith('rootfile'):
-                    opf_path = child.attrib.get('full-path')
-                    break
-            if opf_path:
-                opf_dir = os.path.dirname(opf_path)
-                opf_content = zf.read(opf_path)
-                opf_root = ET.fromstring(opf_content)
-                
-                manifest = {}
-                spine = []
-                for child in opf_root.iter():
-                    if child.tag.endswith('item'):
-                        manifest[child.attrib.get('id')] = child.attrib.get('href')
-                    elif child.tag.endswith('itemref'):
-                        spine.append(child.attrib.get('idref'))
-                
-                toc_map = {}
-                for item_id, href in manifest.items():
-                    if href.endswith('.ncx'):
-                        try:
-                            ncx_content = zf.read(href if not opf_dir else f"{opf_dir}/{href}")
-                            ncx_root = ET.fromstring(ncx_content)
-                            for navPoint in ncx_root.iter():
-                                if navPoint.tag.endswith('navPoint'):
-                                    text_node = navPoint.find('.//*{http://www.daisy.org/z3986/2005/ncx/}text')
-                                    content_node = navPoint.find('.//*{http://www.daisy.org/z3986/2005/ncx/}content')
-                                    if text_node is not None and content_node is not None:
-                                        src = content_node.attrib.get('src', '').split('#')[0]
-                                        toc_map[src] = text_node.text
-                        except:
-                            pass
-                
-                for idx, item_id in enumerate(spine):
-                    if item_id in manifest:
-                        href = manifest[item_id]
-                        item_path = href if not opf_dir else f"{opf_dir}/{href}"
-                        try:
-                            html_bytes = zf.read(item_path)
-                            html_str = html_bytes.decode('utf-8', errors='ignore')
-                            html_str = re.sub(r'<(p|br|div|h[1-6]|li|tr|td|th)[^>]*>', '\n', html_str, flags=re.IGNORECASE)
-                            html_str = re.sub(r'<[^>]+>', '', html_str)
-                            html_str = html.unescape(html_str)
-                            html_str = re.sub(r'\n{3,}', '\n\n', html_str)
-                            
-                            title = toc_map.get(href, f"Chapter {idx+1}")
-                            book.chapters.append(Chapter(title, html_str.strip()))
-                        except:
-                            pass
-        return book
-
-class FB2Parser:
-    @staticmethod
-    def parse(filepath) -> Book:
-        import xml.etree.ElementTree as ET
-        import re
-        book = Book(filepath=filepath)
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-            xml_content = f.read()
-        xml_content = re.sub(r'\sxmlns="[^"]+"', '', xml_content, count=1)
+        valid_exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
         try:
-            root = ET.fromstring(xml_content)
-            bodies = root.findall('body')
-            main_body = bodies[0] if bodies else root
-            
-            sections = main_body.findall('.//section')
-            if not sections:
-                text_parts = ["".join(p.itertext()).strip() for p in main_body.findall('.//p')]
-                book.chapters.append(Chapter("Book", "\n\n".join(text_parts)))
-            else:
-                for idx, sec in enumerate(sections):
-                    title_node = sec.find('title')
-                    title_text = "".join(title_node.itertext()).strip() if title_node is not None else f"Chapter {idx+1}"
-                    
-                    text_parts = []
-                    for p in sec.findall('p'):
-                        p_text = "".join(p.itertext()).strip()
-                        if p_text: text_parts.append(p_text)
-                    
-                    book.chapters.append(Chapter(title_text, "\n\n".join(text_parts)))
+            with zipfile.ZipFile(filepath, 'r') as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    if info.filename.startswith('__MACOSX') or '/.' in info.filename or info.filename.startswith('.'):
+                        continue
+                    ext = os.path.splitext(info.filename)[1].lower()
+                    if ext in valid_exts:
+                        book.pages.append(info.filename)
+            book.pages.sort(key=natural_sort_key)
         except Exception as e:
-            book.chapters.append(Chapter("Error", f"Could not parse FB2: {str(e)}"))
+            pass
         return book
-
-class TXTParser:
-    @staticmethod
-    def parse(filepath) -> Book:
-        book = Book(filepath=filepath)
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-            text_data = f.read()
-        
-        chunk_len = len(text_data) // 10
-        if chunk_len == 0:
-            book.chapters.append(Chapter("Full Text", text_data))
-        else:
-            for i in range(10):
-                book.chapters.append(Chapter(f"Part {i+1} ({(i)*10}%)", text_data[i*chunk_len:(i+1)*chunk_len]))
-        return book
-
-class KindleParser:
-    @staticmethod
-    def parse(filepath) -> Book:
-        import shutil
-        import re
-        import html
-        
-        try:
-            import mobi
-            extracted_dir, filepath_extracted = mobi.extract(filepath)
-            try:
-                if filepath_extracted.lower().endswith('.epub'):
-                    return EPUBParser.parse(filepath_extracted)
-                else:
-                    book = Book(filepath=filepath)
-                    with open(filepath_extracted, 'r', encoding='utf-8', errors='ignore') as f:
-                        html_str = f.read()
-                        
-                    parts = re.split(r'<mbp:pagebreak[^>]*>', html_str, flags=re.IGNORECASE)
-                    
-                    for idx, part in enumerate(parts):
-                        part = re.sub(r'<(p|br|div|h[1-6]|li|tr|td|th)[^>]*>', '\n', part, flags=re.IGNORECASE)
-                        part = re.sub(r'<[^>]+>', '', part)
-                        part = html.unescape(part)
-                        part = re.sub(r'\n{3,}', '\n\n', part).strip()
-                        
-                        if part:
-                            lines = [l.strip() for l in part.split('\n') if l.strip()]
-                            title = f"Part {idx+1}"
-                            if lines and len(lines[0]) < 60:
-                                title = lines[0]
-                            book.chapters.append(Chapter(title, part))
-                            
-                    if not book.chapters:
-                        book.chapters.append(Chapter("Content", "No readable text found."))
-                    return book
-            finally:
-                try:
-                    shutil.rmtree(extracted_dir)
-                except: pass
-        except Exception as e:
-            book = Book(filepath=filepath)
-            book.chapters.append(Chapter("Error", "This ebook is DRM-protected or unsupported.\n\nError details: " + str(e)))
-            return book
 
 def get_parser(filepath):
-    ext = os.path.splitext(filepath)[1].lower()
-    if ext == '.epub': return EPUBParser()
-    elif ext == '.fb2': return FB2Parser()
-    elif ext in ['.mobi', '.azw', '.azw3']: return KindleParser()
-    else: return TXTParser()
+    return CBZParser()
 
 def main():
     sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER)
@@ -378,7 +211,7 @@ def main():
         if sdl2.SDL_IsGameController(i):
             controllers.append(sdl2.SDL_GameControllerOpen(i))
 
-    window = sdl2.ext.Window("RetroRead", size=(SCREEN_W, SCREEN_H), flags=sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
+    window = sdl2.ext.Window("RetroComics", size=(SCREEN_W, SCREEN_H), flags=sdl2.SDL_WINDOW_FULLSCREEN_DESKTOP)
     window.show()
     renderer = sdl2.ext.Renderer(window, flags=sdl2.SDL_RENDERER_ACCELERATED | sdl2.SDL_RENDERER_PRESENTVSYNC)
     reader_target = None
@@ -395,9 +228,9 @@ def main():
     if not os.path.exists(FONT_PATH):
         sys.exit(1)
         
-    font_large = sdlttf.TTF_OpenFont(font_path, 48)
+    font_large = sdlttf.TTF_OpenFont(font_path, 40)
     font_small = sdlttf.TTF_OpenFont(font_path, 24)
-    font_ui_medium = sdlttf.TTF_OpenFont(font_path, 32)
+    font_ui_medium = sdlttf.TTF_OpenFont(font_path, 36)
     
     current_font_size = 34
     font_medium = sdlttf.TTF_OpenFont(reading_font_bytes, current_font_size)
@@ -425,26 +258,31 @@ def main():
     
     state = STATE_BROWSE
     sel_index = 0
+    scroll_y = 0
+    dpad_up_held = False
+    dpad_down_held = False
+    dpad_timer = 0
     visible_items = 15
     theme_idx = load_theme_idx()
     reader_rotation_idx = load_reader_rotation_idx()
     
     # Reader Data
-    raw_chapters = [] # List of (title, text_string)
-    reader_lines = []
-    chapter_offsets = [] # List of (title, line_index)
-    
+    book_pages = [] # List of image filenames
     current_filepath = ""
-    reader_scroll_y = 0
-    toc_sel_index = 0
+    current_page_idx = 0
+    zoom_level = -1.0 # -1.0 means auto fit width initially
+    pan_x = 0
+    pan_y = 0
+    loaded_texture = None
+    loaded_page_idx = -1
+    img_w = 0
+    img_h = 0
+    page_select_temp = 0
+    l2_pressed = False
+    r2_pressed = False
     
     state_before_quit = STATE_BROWSE
     
-    # Dynamic calculations
-    lines_per_page = 15
-    line_height = 45
-    chars_per_line = 55
-
     def get_reader_view_size():
         if reader_rotation_idx % 2 == 1:
             return SCREEN_H, SCREEN_W
@@ -468,124 +306,60 @@ def main():
         return reader_target
 
     def rotate_reader_direction(dx, dy):
-        for _ in range(reader_rotation_idx % 4):
-            dx, dy = dy, -dx
+        rot = reader_rotation_idx % 4
+        if rot == 1:
+            return -dy, dx
+        elif rot == 2:
+            return -dx, -dy
+        elif rot == 3:
+            return dy, -dx
         return dx, dy
 
     def handle_reader_direction(dx, dy):
-        nonlocal reader_scroll_y
+        nonlocal pan_x, pan_y, zoom_level, img_h, img_w
         dx, dy = rotate_reader_direction(dx, dy)
-        max_s = max(0, len(reader_lines) - lines_per_page)
+        vw, vh = get_reader_view_size()
         
-        if dy < 0:
-            reader_scroll_y = max(0, reader_scroll_y - 1)
-            while reader_scroll_y > 0 and reader_lines[reader_scroll_y] == "":
-                reader_scroll_y -= 1
-        elif dy > 0:
-            reader_scroll_y = min(max_s, reader_scroll_y + 1)
-            while reader_scroll_y < max_s and reader_lines[reader_scroll_y] == "":
-                reader_scroll_y += 1
-        elif dx < 0:
-            reader_scroll_y = max(0, reader_scroll_y - lines_per_page)
-            while reader_scroll_y > 0 and reader_lines[reader_scroll_y] == "":
-                reader_scroll_y -= 1
-        elif dx > 0:
-            reader_scroll_y = min(max_s, reader_scroll_y + lines_per_page)
-            while reader_scroll_y < max_s and reader_lines[reader_scroll_y] == "":
-                reader_scroll_y += 1
-    
-    def recalculate_layout():
-        nonlocal lines_per_page, line_height, chars_per_line, font_medium, reader_lines, chapter_offsets
-        # Close old font
-        if font_medium:
-            sdlttf.TTF_CloseFont(font_medium)
-        font_medium = sdlttf.TTF_OpenFont(reading_font_bytes, current_font_size)
-        
-        # Calculate fitting
-        reader_w, reader_h = get_reader_view_size()
-        line_height = int(current_font_size * 1.32)
-        # Reserve 55px for footer + 50px top padding = 105px reserved
-        lines_per_page = max(1, (reader_h - 105) // line_height)
-        
-        max_line_width = reader_w - 40 # 20px left, 20px right
-        
-        import ctypes
-        w = ctypes.c_int()
-        h = ctypes.c_int()
-        
-        # Re-wrap text
-        reader_lines = []
-        chapter_offsets = []
-        
-        # Cache to dramatically speed up width calculation (avoid C calls for every word)
-        word_width_cache = {}
-        def get_word_width(w_str):
-            if w_str not in word_width_cache:
-                sdlttf.TTF_SizeUTF8(font_medium, w_str.encode('utf-8', errors='replace'), ctypes.byref(w), ctypes.byref(h))
-                word_width_cache[w_str] = w.value
-            return word_width_cache[w_str]
+        if zoom_level <= 0:
+            zoom_level = vw / float(img_w) if img_w > 0 else 1.0
             
-        space_width = get_word_width(" ")
-        indent_width = get_word_width("   ")
+        scaled_w = int(img_w * zoom_level)
+        scaled_h = int(img_h * zoom_level)
         
-        for title, text in raw_chapters:
-            chapter_offsets.append((title, len(reader_lines)))
-            # Split text into paragraphs
-            for paragraph in text.split('\n'):
-                paragraph = paragraph.replace('\t', '    ').strip()
-                if not paragraph:
-                    reader_lines.append("")
-                    continue
-                
-                # Split by space to prevent breaking Vietnamese words
-                words = paragraph.split(' ')
-                current_line = []
-                current_w = indent_width
-                is_first_line = True
-                
-                for word in words:
-                    if not word: continue
-                    ww = get_word_width(word)
-                    
-                    if not current_line:
-                        current_line.append(word)
-                        current_w += ww
-                    else:
-                        if current_w + space_width + ww <= max_line_width:
-                            current_line.append(word)
-                            current_w += space_width + ww
-                        else:
-                            prefix = "   " if is_first_line else ""
-                            reader_lines.append(prefix + " ".join(current_line))
-                            current_line = [word]
-                            current_w = ww
-                            is_first_line = False
-                            
-                if current_line:
-                    prefix = "   " if is_first_line else ""
-                    reader_lines.append(prefix + " ".join(current_line))
-                    
+        pan_step = 150 # pixels per dpad press
+        
+        if dx != 0:
+            pan_x += dx * pan_step
+        if dy != 0:
+            pan_y += dy * pan_step
+            
+        # Clamp pan_x
+        max_pan_x = max(0, scaled_w - vw)
+        pan_x = max(0, min(pan_x, max_pan_x))
+        # Clamp pan_y
+        max_pan_y = max(0, scaled_h - vh)
+        pan_y = max(0, min(pan_y, max_pan_y))
+
     def load_book(filepath):
-        nonlocal raw_chapters, reader_scroll_y, current_font_size, current_filepath
-        raw_chapters = []
+        nonlocal book_pages, current_page_idx, pan_x, pan_y, zoom_level, current_font_size, current_filepath
+        book_pages = []
         
         save_data = load_save(filepath)
-        reader_scroll_y = save_data.get("scroll_y", 0)
+        current_page_idx = save_data.get("scroll_y", 0)
         current_font_size = save_data.get("font_size", 34)
+        zoom_level = -1.0
+        pan_x = 0
+        pan_y = 0
         current_filepath = filepath
         
         try:
             parser = get_parser(filepath)
             book = parser.parse(filepath)
-            if not book.chapters:
+            if not book.pages:
                 return False
                 
-            for ch in book.chapters:
-                raw_chapters.append((ch.title, ch.content))
-                
-            recalculate_layout()
-            if reader_lines:
-                reader_scroll_y = max(0, min(reader_scroll_y, len(reader_lines) - lines_per_page))
+            book_pages = book.pages
+            current_page_idx = max(0, min(current_page_idx, len(book_pages) - 1))
             return True
         except Exception as e:
             return False
@@ -601,31 +375,51 @@ def main():
             needs_redraw = True
             
         current_ticks = sdl2.SDL_GetTicks()
-        if state == STATE_READER and (current_ticks - last_axis_scroll > 100):
-            for c in controllers:
-                lx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTX)
-                ly = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTY)
-                rx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTX)
-                ry = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTY)
-                axis_x = lx if abs(lx) >= abs(rx) else rx
-                axis_y = ly if abs(ly) >= abs(ry) else ry
-                if abs(axis_x) < 16000 and abs(axis_y) < 16000:
-                    continue
-                if abs(axis_x) > abs(axis_y):
-                    handle_reader_direction(1 if axis_x > 0 else -1, 0)
-                    last_axis_scroll = current_ticks
-                    needs_redraw = True
-                    break
-                else:
-                    handle_reader_direction(0, 1 if axis_y > 0 else -1)
+        axis_up = False
+        axis_down = False
+        for c in controllers:
+            lx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTX)
+            ly = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTY)
+            rx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTX)
+            ry = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTY)
+            ax = lx if abs(lx) >= abs(rx) else rx
+            ay = ly if abs(ly) >= abs(ry) else ry
+            if ay < -16000:
+                axis_up = True
+            elif ay > 16000:
+                axis_down = True
+            if state == STATE_READER and (current_ticks - last_axis_scroll > 100):
+                if abs(ax) >= 16000 or abs(ay) >= 16000:
+                    if abs(ax) > abs(ay):
+                        handle_reader_direction(1 if ax > 0 else -1, 0)
+                    else:
+                        handle_reader_direction(0, 1 if ay > 0 else -1)
                     last_axis_scroll = current_ticks
                     needs_redraw = True
                     break
                     
         for event in events:
+            if event.type == sdl2.SDL_CONTROLLERAXISMOTION:
+                if state == STATE_READER:
+                    if event.caxis.axis == sdl2.SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+                        val = event.caxis.value
+                        if val > 16000 and not l2_pressed:
+                            l2_pressed = True
+                            state = STATE_PAGE_SELECT
+                            page_select_temp = current_page_idx
+                        elif val < 8000:
+                            l2_pressed = False
+                    elif event.caxis.axis == sdl2.SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+                        val = event.caxis.value
+                        if val > 16000 and not r2_pressed:
+                            r2_pressed = True
+                            state = STATE_PAGE_SELECT
+                            page_select_temp = current_page_idx
+                        elif val < 8000:
+                            r2_pressed = False
             if event.type == sdl2.SDL_QUIT:
                 if state in (STATE_READER, STATE_TOC):
-                    write_save(current_filepath, reader_scroll_y, current_font_size)
+                    write_save(current_filepath, current_page_idx, current_font_size)
                 running = False
             elif event.type == sdl2.SDL_KEYDOWN:
                 if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
@@ -633,6 +427,12 @@ def main():
                         write_save(current_filepath, reader_scroll_y, current_font_size)
                     running = False
                     
+            elif event.type == sdl2.SDL_CONTROLLERBUTTONUP:
+                btn = event.cbutton.button
+                if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP:
+                    dpad_up_held = False
+                elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                    dpad_down_held = False
             elif event.type == sdl2.SDL_CONTROLLERBUTTONDOWN:
                 btn = event.cbutton.button
                 if btn == sdl2.SDL_CONTROLLER_BUTTON_START:
@@ -645,9 +445,19 @@ def main():
                     list_items += [{"name": f, "is_dir": False} for f in files]
                     
                     if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP:
-                        sel_index = (sel_index - 1) % max(1, len(list_items))
+                        dpad_up_held = True
+                        dpad_timer = 0
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                        sel_index = (sel_index + 1) % max(1, len(list_items))
+                        dpad_down_held = True
+                        dpad_timer = 0
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_LEFTSHOULDER: # Page Up
+                        visible_items = 8
+                        sel_index = max(0, sel_index - visible_items)
+                        scroll_y = max(0, scroll_y - visible_items)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: # Page Down
+                        visible_items = 8
+                        sel_index = min(len(list_items) - 1, sel_index + visible_items)
+                        scroll_y = min(max(0, len(list_items) - visible_items), scroll_y + visible_items)
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y - Theme Toggle
                         theme_idx = (theme_idx + 1) % len(THEMES)
                         write_theme_idx(theme_idx)
@@ -658,10 +468,12 @@ def main():
                                 current_path = os.path.dirname(current_path)
                                 folders, files = get_directory_contents(current_path)
                                 sel_index = 0
+                                scroll_y = 0
                             elif item["is_dir"]:
                                 current_path = os.path.join(current_path, item["name"])
                                 folders, files = get_directory_contents(current_path)
                                 sel_index = 0
+                                scroll_y = 0
                             else:
                                 filepath = os.path.join(current_path, item["name"])
                                 if load_book(filepath):
@@ -671,6 +483,7 @@ def main():
                             current_path = os.path.dirname(current_path)
                             folders, files = get_directory_contents(current_path)
                             sel_index = 0
+                            scroll_y = 0
                         
                 elif state == STATE_READER:
                     if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP:
@@ -681,39 +494,67 @@ def main():
                         handle_reader_direction(-1, 0)
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                         handle_reader_direction(1, 0)
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_LEFTSHOULDER: # Decrease Font
-                        current_font_size = max(30, current_font_size - 2)
-                        recalculate_layout()
-                        if reader_lines:
-                            reader_scroll_y = max(0, min(reader_scroll_y, len(reader_lines) - lines_per_page))
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: # Increase Font
-                        current_font_size = min(44, current_font_size + 2)
-                        recalculate_layout()
-                        if reader_lines:
-                            reader_scroll_y = max(0, min(reader_scroll_y, len(reader_lines) - lines_per_page))
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y - Theme Toggle
-                        theme_idx = (theme_idx + 1) % len(THEMES)
-                        write_theme_idx(theme_idx)
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_Y: # Physical X - Rotate reader
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_LEFTSHOULDER: # L1: Prev Page
+                        current_page_idx = max(0, current_page_idx - 1)
+                        zoom_level = -1.0
+                        pan_x = 0
+                        pan_y = 0
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: # R1: Next Page
+                        current_page_idx = min(len(book_pages) - 1, current_page_idx + 1)
+                        zoom_level = -1.0
+                        pan_x = 0
+                        pan_y = 0
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y: Zoom In
+                        vw, vh = get_reader_view_size()
+                        if img_w > 0 and img_h > 0:
+                            min_zoom = min(vw / float(img_w), vh / float(img_h))
+                            if zoom_level <= 0:
+                                zoom_level = vw / float(img_w)
+                            zoom_level = min(zoom_level * 1.2, min_zoom * 8.0)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B: Zoom Out
+                        vw, vh = get_reader_view_size()
+                        if img_w > 0 and img_h > 0:
+                            min_zoom = min(vw / float(img_w), vh / float(img_h))
+                            if zoom_level <= 0:
+                                zoom_level = vw / float(img_w)
+                            zoom_level = max(zoom_level / 1.2, min_zoom)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_Y: # Physical X: Rotate
                         reader_rotation_idx = (reader_rotation_idx + 1) % 4
                         write_reader_rotation_idx(reader_rotation_idx)
-                        recalculate_layout()
-                        if reader_lines:
-                            reader_scroll_y = max(0, min(reader_scroll_y, len(reader_lines) - lines_per_page))
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # SELECT - TOC
-                        state = STATE_TOC
-                        toc_sel_index = 0
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B - Exit Reader
-                        write_save(current_filepath, reader_scroll_y, current_font_size)
+                        zoom_level = -1.0 # reset zoom
+                        pan_x = 0
+                        pan_y = 0
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # SELECT: Exit
+                        write_save(current_filepath, current_page_idx, current_font_size)
                         state = STATE_BROWSE
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A - Toggle HUD
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A: Toggle HUD
                         show_hud = not show_hud
+                        
+                elif state == STATE_PAGE_SELECT:
+                    if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP or btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                        page_select_temp = min(len(book_pages) - 1, page_select_temp + 1)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN or btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                        page_select_temp = max(0, page_select_temp - 1)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+                        page_select_temp = max(0, page_select_temp - 10)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+                        page_select_temp = min(len(book_pages) - 1, page_select_temp + 10)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A: Confirm
+                        current_page_idx = page_select_temp
+                        zoom_level = -1.0
+                        pan_x = 0
+                        pan_y = 0
+                        state = STATE_READER
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B: Cancel
+                        state = STATE_READER
                         
                 elif state == STATE_TOC:
                     if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP:
-                        toc_sel_index = (toc_sel_index - 1) % max(1, len(chapter_offsets))
+                        dpad_up_held = True
+                        dpad_timer = 0
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                        toc_sel_index = (toc_sel_index + 1) % max(1, len(chapter_offsets))
+                        dpad_down_held = True
+                        dpad_timer = 0
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A - Select chapter
                         if len(chapter_offsets) > 0:
                             reader_scroll_y = chapter_offsets[toc_sel_index][1]
@@ -724,10 +565,79 @@ def main():
                 elif state == STATE_QUIT_CONFIRM:
                     if btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A (Confirm)
                         if state_before_quit in (STATE_READER, STATE_TOC):
-                            write_save(current_filepath, reader_scroll_y, current_font_size)
+                            write_save(current_filepath, current_page_idx, current_font_size)
                         running = False
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B (Cancel)
                         state = state_before_quit
+
+        # Key repeat logic for library (exact Files app behavior)
+        is_up = dpad_up_held or axis_up
+        is_down = dpad_down_held or axis_down
+        
+        if state == STATE_BROWSE:
+            list_items = [{"name": "..", "is_dir": True}] if current_path != base_path else []
+            list_items += [{"name": f, "is_dir": True} for f in folders]
+            list_items += [{"name": f, "is_dir": False} for f in files]
+            library_visible_items = 8
+            
+            if is_up:
+                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
+                    if len(list_items) > 0:
+                        if sel_index == 0:
+                            sel_index = len(list_items) - 1
+                            scroll_y = max(0, len(list_items) - library_visible_items)
+                        else:
+                            sel_index -= 1
+                            if sel_index < scroll_y:
+                                scroll_y = sel_index
+                    needs_redraw = True
+                dpad_timer += 1
+            elif is_down:
+                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
+                    if len(list_items) > 0:
+                        if sel_index == len(list_items) - 1:
+                            sel_index = 0
+                            scroll_y = 0
+                        else:
+                            sel_index += 1
+                            if sel_index >= scroll_y + library_visible_items:
+                                scroll_y = sel_index - library_visible_items + 1
+                    needs_redraw = True
+                dpad_timer += 1
+            else:
+                dpad_timer = 0
+        elif state == STATE_TOC:
+            if is_up:
+                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
+                    if len(chapter_offsets) > 0:
+                        toc_sel_index = (toc_sel_index - 1) % len(chapter_offsets)
+                    needs_redraw = True
+                dpad_timer += 1
+            elif is_down:
+                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
+                    if len(chapter_offsets) > 0:
+                        toc_sel_index = (toc_sel_index + 1) % len(chapter_offsets)
+                    needs_redraw = True
+                dpad_timer += 1
+            else:
+                dpad_timer = 0
+        elif state == STATE_PAGE_SELECT:
+            if is_up:
+                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
+                    page_select_temp = min(len(book_pages) - 1, page_select_temp + 1)
+                    needs_redraw = True
+                dpad_timer += 1
+            elif is_down:
+                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
+                    page_select_temp = max(0, page_select_temp - 1)
+                    needs_redraw = True
+                dpad_timer += 1
+            else:
+                dpad_timer = 0
+        elif state != STATE_READER:
+            dpad_up_held = False
+            dpad_down_held = False
+            dpad_timer = 0
 
         if needs_redraw:
             theme = THEMES[theme_idx]
@@ -751,52 +661,55 @@ def main():
                 list_items += [{"name": f, "is_dir": True} for f in folders]
                 list_items += [{"name": f, "is_dir": False} for f in files]
 
-                library_visible_items = 10
+                library_visible_items = 8
                 book_count = f"{len(files)} BOOK" + ("" if len(files) == 1 else "S")
                 tex, tw, th = render_text(book_count, font_small, library_theme["secondary"])
                 if tex:
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(SCREEN_W - 32 - tw, 27, tw, th))
                     sdl2.SDL_DestroyTexture(tex)
 
-                start_idx = max(0, sel_index - library_visible_items // 2)
+                start_idx = scroll_y
                 end_idx = min(len(list_items), start_idx + library_visible_items)
                 
-                y_start = 92
-                row_h = 62
+                y_start = 86
+                row_h = 74
                 for i in range(start_idx, end_idx):
                     item = list_items[i]
                     iy = y_start + (i - start_idx) * row_h
                     
+                    text_col = sdl2.SDL_Color(30, 30, 30, 255) if i == sel_index else library_theme["text"]
+                    sec_col = sdl2.SDL_Color(80, 80, 80, 255) if i == sel_index else library_theme["secondary"]
+                    
                     if i == sel_index:
-                        renderer.fill((20, iy, SCREEN_W - 40, row_h + 4), library_theme["selected"])
-                        renderer.fill((20, iy, 3, row_h + 4), library_theme["accent"])
+                        sel_x, sel_y, sel_w, sel_h = 20, iy, SCREEN_W - 40, 68
+                        renderer.fill((sel_x, sel_y, sel_w, sel_h), sdl2.ext.Color(102, 137, 181))
+                        renderer.fill((sel_x + 2, sel_y + 2, sel_w - 4, sel_h - 4), sdl2.ext.Color(229, 235, 241))
 
                     if item["is_dir"]:
-                        # Preserve folder navigation while distinguishing it from books.
                         renderer.fill((42, iy + 18, 18, 14), library_theme["accent"])
                         renderer.fill((44, iy + 15, 9, 4), library_theme["accent"])
-                        tex, tw, th = render_text(item["name"], font_ui_medium, library_theme["text"])
+                        tex, tw, th = render_text(item["name"], font_ui_medium, text_col)
                         if tex:
                             sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(78, iy + 13, min(tw, SCREEN_W - 110), th))
                             sdl2.SDL_DestroyTexture(tex)
                     else:
                         title, author = get_book_display_metadata(item["name"])
-                        icon_bg = library_theme["selected"] if i == sel_index else library_theme["bg"]
+                        icon_bg = sdl2.ext.Color(229, 235, 241) if i == sel_index else library_theme["bg"]
                         draw_book_icon(renderer, 42, iy + 16, library_theme["accent"], icon_bg)
                         sdlttf.TTF_SetFontStyle(font_ui_medium, sdlttf.TTF_STYLE_BOLD)
-                        tex, tw, th = render_text(title, font_ui_medium, library_theme["text"])
+                        tex, tw, th = render_text(title, font_ui_medium, text_col)
                         sdlttf.TTF_SetFontStyle(font_ui_medium, sdlttf.TTF_STYLE_NORMAL)
                         if tex:
                             sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(78, iy + 4, min(tw, SCREEN_W - 110), th))
                             sdl2.SDL_DestroyTexture(tex)
                         if author:
-                            tex, tw, th = render_text(author, font_small, library_theme["secondary"])
+                            tex, tw, th = render_text(author, font_small, sec_col)
                             if tex:
-                                sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(78, iy + 34, min(tw, SCREEN_W - 110), th))
+                                sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(78, iy + 37, min(tw, SCREEN_W - 110), th))
                                 sdl2.SDL_DestroyTexture(tex)
                         
                 renderer.fill((0, SCREEN_H - 58, SCREEN_W, 1), library_theme["divider"])
-                footer = "A Open    B Back    Y Theme    START Exit"
+                footer = "A: Open    B: Back    Y: Theme    [START] Exit"
                 tex, tw, th = render_text(footer, font_small, library_theme["secondary"])
                 if tex:
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(32, SCREEN_H - 38, tw, th))
@@ -804,77 +717,124 @@ def main():
 
             elif render_state == STATE_READER:
                 reader_w, reader_h = get_reader_view_size()
-                reader_angle = reader_rotation_idx * 90
-                drawing_rotated = reader_rotation_idx != 0
-                if drawing_rotated:
-                    target = ensure_reader_target(reader_w, reader_h)
-                    if target:
-                        sdl2.SDL_SetRenderTarget(renderer.sdlrenderer, target)
-                        renderer.clear(theme["bg"])
-                    else:
-                        drawing_rotated = False
-                        reader_w, reader_h = SCREEN_W, SCREEN_H
-
-                y_pos = 50
-                max_y = reader_h - 55 # Leave room for footer
-                i = reader_scroll_y
-                while i < len(reader_lines):
-                    line = reader_lines[i]
-                    step = max(2, line_height // 6) if line == "" else line_height
-                    if y_pos + step > max_y:
-                        break
-                        
-                    if line == "":
-                        y_pos += step
-                    else:
-                        tex, tw, th = render_text(line, font_medium, theme["text"])
-                        if tex:
-                            sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, y_pos, tw, th))
-                            sdl2.SDL_DestroyTexture(tex)
-                        y_pos += step
-                    i += 1
                 
-                # HUD Elements
+                target = ensure_reader_target(reader_w, reader_h)
+                sdl2.SDL_SetRenderTarget(renderer.sdlrenderer, target)
+                renderer.clear(theme["bg"])
+                
+                if book_pages and current_page_idx < len(book_pages):
+                    if loaded_page_idx != current_page_idx:
+                        if loaded_texture:
+                            sdl2.SDL_DestroyTexture(loaded_texture)
+                            loaded_texture = None
+                            
+                        # Load new image
+                        try:
+                            import zipfile
+                            with zipfile.ZipFile(current_filepath, 'r') as zf:
+                                img_data = zf.read(book_pages[current_page_idx])
+                                rw = sdl2.SDL_RWFromConstMem(img_data, len(img_data))
+                                surf = sdlimage.IMG_Load_RW(rw, 1)
+                                if surf:
+                                    img_w = surf.contents.w
+                                    img_h = surf.contents.h
+                                    loaded_texture = sdl2.SDL_CreateTextureFromSurface(renderer.sdlrenderer, surf)
+                                    sdl2.SDL_FreeSurface(surf)
+                        except:
+                            pass
+                        loaded_page_idx = current_page_idx
+                
+                if loaded_texture:
+                    if zoom_level <= 0:
+                        zoom_level = reader_w / float(img_w) if img_w > 0 else 1.0
+                        
+                    scaled_w = int(img_w * zoom_level)
+                    scaled_h = int(img_h * zoom_level)
+                    
+                    # Clamp pan
+                    max_pan_x = max(0, scaled_w - reader_w)
+                    max_pan_y = max(0, scaled_h - reader_h)
+                    pan_x = max(0, min(pan_x, max_pan_x))
+                    pan_y = max(0, min(pan_y, max_pan_y))
+                    
+                    # If image is smaller than screen, center it
+                    draw_x = -pan_x
+                    draw_y = -pan_y
+                    if scaled_w < reader_w:
+                        draw_x = (reader_w - scaled_w) // 2
+                    if scaled_h < reader_h:
+                        draw_y = (reader_h - scaled_h) // 2
+                        
+                    dst_rect = sdl2.SDL_Rect(draw_x, draw_y, scaled_w, scaled_h)
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, loaded_texture, None, dst_rect)
+                
                 if show_hud:
-                    # Progress bar
-                    if len(reader_lines) > 0:
-                        progress = min(1.0, reader_scroll_y / max(1, len(reader_lines) - lines_per_page))
-                        bar_w = int((reader_w - 40) * progress)
-                        renderer.fill((20, reader_h - 10, reader_w - 40, 5), theme["sel"])
-                        renderer.fill((20, reader_h - 10, bar_w, 5), theme["text"])
-                    
-                    # Top HUD: Chapter Name and Page Number
-                    curr_chap = "Chapter 1"
-                    for ch_title, ch_line in chapter_offsets:
-                        if ch_line <= reader_scroll_y:
-                            curr_chap = ch_title
-                        else:
-                            break
-                    
-                    total_pages = max(1, len(reader_lines) // lines_per_page + 1)
-                    curr_page = reader_scroll_y // lines_per_page + 1
-                    
+                    # Top HUD
                     book_name = os.path.basename(current_filepath)
-                    hud_top = f"{book_name} - {curr_chap} - Page {curr_page}/{total_pages}"
+                    total_pages = len(book_pages)
+                    hud_top = f"{book_name} - Page {current_page_idx + 1}/{total_pages}"
                     tex, tw, th = render_text(hud_top, font_small, theme["text"])
                     if tex:
                         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, 15, min(tw, reader_w-40), th))
                         sdl2.SDL_DestroyTexture(tex)
                     
-                    # Bottom HUD: Instructions
-                    footer = f"Size: {current_font_size} | L/R: Aa | A: HUD | B: Back | X: Rotate | Y: Theme | SELECT: Contents | START: Exit"
+                    # Bottom HUD
+                    footer = f"DPAD: Pan | L/R: Turn | Y: Zoom In | B: Zoom Out | X: Rotate | A: HUD | Sel: Exit"
                     tex, tw, th = render_text(footer, font_small, theme["text"])
                     if tex:
                         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, reader_h - 45, min(tw, reader_w-40), th))
                         sdl2.SDL_DestroyTexture(tex)
 
+                drawing_rotated = (reader_rotation_idx != 0)
                 if drawing_rotated:
+                    reader_angle = 0
+                    if reader_rotation_idx == 1: reader_angle = 270
+                    elif reader_rotation_idx == 2: reader_angle = 180
+                    elif reader_rotation_idx == 3: reader_angle = 90
+                    
                     sdl2.SDL_SetRenderTarget(renderer.sdlrenderer, None)
                     renderer.clear(theme["bg"])
                     src_rect = sdl2.SDL_Rect(0, 0, reader_w, reader_h)
                     dst_rect = sdl2.SDL_Rect((SCREEN_W - reader_w) // 2, (SCREEN_H - reader_h) // 2, reader_w, reader_h)
                     sdl2.SDL_RenderCopyEx(renderer.sdlrenderer, target, src_rect, dst_rect, reader_angle, None, sdl2.SDL_FLIP_NONE)
-
+                else:
+                    sdl2.SDL_SetRenderTarget(renderer.sdlrenderer, None)
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, target, None, None)
+                    
+            elif render_state == STATE_PAGE_SELECT:
+                # First draw the reader state behind it (slightly dimmed or just as is)
+                # But since we are in a single frame, we don't have the last frame. 
+                # Let's just draw a simple overlay.
+                # Actually, STATE_PAGE_SELECT is a separate state. We should redraw the reader background first.
+                # To keep it simple, just clear screen and draw big popup.
+                renderer.clear(theme["bg"])
+                
+                # Draw Box
+                box_w = 400
+                box_h = 200
+                box_x = (SCREEN_W - box_w) // 2
+                box_y = (SCREEN_H - box_h) // 2
+                renderer.fill((box_x, box_y, box_w, box_h), theme["text"])
+                renderer.fill((box_x+2, box_y+2, box_w-4, box_h-4), theme["bg"])
+                
+                title_str = "JUMP TO PAGE"
+                tex, tw, th = render_text(title_str, font_medium, theme["text"])
+                if tex:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(box_x + (box_w - tw)//2, box_y + 30, tw, th))
+                    sdl2.SDL_DestroyTexture(tex)
+                    
+                page_str = f"{page_select_temp + 1} / {len(book_pages)}"
+                tex, tw, th = render_text(page_str, font_large, theme["text"])
+                if tex:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(box_x + (box_w - tw)//2, box_y + 80, tw, th))
+                    sdl2.SDL_DestroyTexture(tex)
+                    
+                hint_str = "A: Jump | B: Cancel"
+                tex, tw, th = render_text(hint_str, font_small, theme["text"])
+                if tex:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(box_x + (box_w - tw)//2, box_y + 150, tw, th))
+                    sdl2.SDL_DestroyTexture(tex)
+                    
             elif render_state == STATE_TOC:
                 renderer.fill((0, 0, SCREEN_W, 60), theme["header"])
                 tex, tw, th = render_text("TABLE OF CONTENTS", font_medium, theme["text"])
@@ -915,7 +875,7 @@ def main():
                 renderer.fill((pop_x, pop_y, pop_w, pop_h), theme["bg"])
                 renderer.fill((pop_x+2, pop_y+2, pop_w-4, pop_h-4), theme["header"])
                 
-                msg = "Exit RetroRead?"
+                msg = "Exit RetroComics?"
                 tex, tw, th = render_text(msg, font_large, theme["text"])
                 if tex:
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(pop_x + pop_w//2 - tw//2, pop_y + 40, tw, th))
@@ -934,6 +894,8 @@ def main():
 
     if font_medium:
         sdlttf.TTF_CloseFont(font_medium)
+    if loaded_texture:
+        sdl2.SDL_DestroyTexture(loaded_texture)
     if reader_target:
         sdl2.SDL_DestroyTexture(reader_target)
     sdlttf.TTF_CloseFont(font_large)
