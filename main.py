@@ -831,7 +831,7 @@ def main():
                         sdl2.SDL_DestroyTexture(tex)
                     
                     # Bottom HUD
-                    footer = f"DPAD: Pan | L/R: Turn | Y: Zoom In | B: Zoom Out | X: Rotate | A: HUD | Sel: Exit"
+                    footer = f"L2/R2: Page Jump | L/R: Turn | Y: Zoom In | B: Zoom Out | X: Rotate | A: HUD | [SELECT] Exit"
                     tex, tw, th = render_text(footer, font_small, theme["text"])
                     if tex:
                         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, reader_h - 45, min(tw, reader_w-40), th))
