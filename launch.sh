@@ -1,5 +1,6 @@
 #!/bin/sh
 APP_DIR=/mnt/SDCARD/Apps/RetroComics
+chmod +x "$APP_DIR/bin/7zzs" "$APP_DIR/bin/7zz" 2>/dev/null
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$APP_DIR:/usr/trimui/lib:/mnt/SDCARD/System/lib"
 export PYSDL2_DLL_PATH="/usr/trimui/lib"
 export SDL_NOMOUSE=1

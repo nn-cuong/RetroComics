@@ -136,7 +136,7 @@ def get_directory_contents(path):
         items = os.listdir(path)
         folders = []
         files = []
-        valid_exts = ['.cbz', '.zip']
+        valid_exts = ['.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar']
         for item in items:
             full_path = os.path.join(path, item)
             if os.path.isdir(full_path):
@@ -170,37 +170,91 @@ def draw_book_icon(renderer, x, y, color, background):
 import zipfile
 import io
 import re
+import subprocess
+
+BIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
+SEVEN_Z_BIN = os.path.join(BIN_DIR, "7zzs") if os.path.exists(os.path.join(BIN_DIR, "7zzs")) else os.path.join(BIN_DIR, "7zz")
+
 def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
     return [int(text) if text.isdigit() else text.lower() for text in _nsre.split(s)]
 
-class Book:
-    def __init__(self, title="", filepath=""):
-        self.title = title
-        self.filepath = filepath
-        self.pages = [] # List of image filenames inside the zip
-
-class CBZParser:
+class ComicArchive:
     @staticmethod
-    def parse(filepath) -> Book:
-        book = Book(filepath=filepath)
-        valid_exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
-        try:
-            with zipfile.ZipFile(filepath, 'r') as zf:
-                for info in zf.infolist():
-                    if info.is_dir():
-                        continue
-                    if info.filename.startswith('__MACOSX') or '/.' in info.filename or info.filename.startswith('.'):
-                        continue
-                    ext = os.path.splitext(info.filename)[1].lower()
-                    if ext in valid_exts:
-                        book.pages.append(info.filename)
-            book.pages.sort(key=natural_sort_key)
-        except Exception as e:
-            pass
-        return book
+    def get_pages(filepath):
+        pages = []
+        valid_exts = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
+        ext = os.path.splitext(filepath)[1].lower()
+        
+        # 1. Fast built-in path for CBZ / ZIP
+        if ext in ('.cbz', '.zip'):
+            try:
+                with zipfile.ZipFile(filepath, 'r') as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        if info.filename.startswith('__MACOSX') or '/.' in info.filename or info.filename.startswith('.'):
+                            continue
+                        if info.filename.lower().endswith(valid_exts):
+                            pages.append(info.filename)
+            except Exception:
+                pass
+        
+        # 2. Universal fallback for CBR, CB7, RAR, 7Z, etc. using 7zzs
+        if not pages and os.path.exists(SEVEN_Z_BIN):
+            try:
+                try:
+                    os.chmod(SEVEN_Z_BIN, 0o755)
+                except Exception:
+                    pass
+                p = subprocess.Popen([SEVEN_Z_BIN, 'l', '-ba', '-slt', filepath], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+                stdout, _ = p.communicate()
+                current_path = None
+                is_dir = False
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith('Path = '):
+                        current_path = line[7:].strip()
+                    elif line.startswith('Folder = +'):
+                        is_dir = True
+                    elif line.startswith('Attributes = D'):
+                        is_dir = True
+                    elif line == '':
+                        if current_path and not is_dir:
+                            if not (current_path.startswith('__MACOSX') or '/.' in current_path or current_path.startswith('.')):
+                                if current_path.lower().endswith(valid_exts):
+                                    pages.append(current_path)
+                        current_path = None
+                        is_dir = False
+                if current_path and not is_dir:
+                    if not (current_path.startswith('__MACOSX') or '/.' in current_path or current_path.startswith('.')):
+                        if current_path.lower().endswith(valid_exts):
+                            pages.append(current_path)
+            except Exception:
+                pass
+                
+        pages.sort(key=natural_sort_key)
+        return pages
 
-def get_parser(filepath):
-    return CBZParser()
+    @staticmethod
+    def read_image_data(filepath, page_filename):
+        ext = os.path.splitext(filepath)[1].lower()
+        if ext in ('.cbz', '.zip'):
+            try:
+                with zipfile.ZipFile(filepath, 'r') as zf:
+                    return zf.read(page_filename)
+            except Exception:
+                pass
+        
+        # Extract directly to stdout in memory via 7zzs stream
+        if os.path.exists(SEVEN_Z_BIN):
+            try:
+                p = subprocess.Popen([SEVEN_Z_BIN, 'e', '-so', filepath, page_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = p.communicate()
+                if stdout:
+                    return stdout
+            except Exception:
+                pass
+        return None
 
 def main():
     sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER)
@@ -353,12 +407,11 @@ def main():
         current_filepath = filepath
         
         try:
-            parser = get_parser(filepath)
-            book = parser.parse(filepath)
-            if not book.pages:
+            pages = ComicArchive.get_pages(filepath)
+            if not pages:
                 return False
                 
-            book_pages = book.pages
+            book_pages = pages
             current_page_idx = max(0, min(current_page_idx, len(book_pages) - 1))
             return True
         except Exception as e:
@@ -730,9 +783,8 @@ def main():
                             
                         # Load new image
                         try:
-                            import zipfile
-                            with zipfile.ZipFile(current_filepath, 'r') as zf:
-                                img_data = zf.read(book_pages[current_page_idx])
+                            img_data = ComicArchive.read_image_data(current_filepath, book_pages[current_page_idx])
+                            if img_data:
                                 rw = sdl2.SDL_RWFromConstMem(img_data, len(img_data))
                                 surf = sdlimage.IMG_Load_RW(rw, 1)
                                 if surf:
@@ -740,7 +792,7 @@ def main():
                                     img_h = surf.contents.h
                                     loaded_texture = sdl2.SDL_CreateTextureFromSurface(renderer.sdlrenderer, surf)
                                     sdl2.SDL_FreeSurface(surf)
-                        except:
+                        except Exception:
                             pass
                         loaded_page_idx = current_page_idx
                 
