@@ -174,7 +174,10 @@ import struct
 import subprocess
 
 BIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
-SEVEN_Z_BIN = os.path.join(BIN_DIR, "7zzs") if os.path.exists(os.path.join(BIN_DIR, "7zzs")) else os.path.join(BIN_DIR, "7zz")
+SEVEN_Z_BIN = "/tmp/7zzs" if os.path.exists("/tmp/7zzs") else (
+    os.path.join(BIN_DIR, "7zzs") if os.path.exists(os.path.join(BIN_DIR, "7zzs")) else os.path.join(BIN_DIR, "7zz")
+)
+UNRAR_BIN = "/tmp/unrar" if os.path.exists("/tmp/unrar") else os.path.join(BIN_DIR, "unrar")
 
 def log_debug(msg):
     try:
@@ -190,25 +193,76 @@ def bitmap_to_bmp(raw_bytes, width, height, bpp=32):
     dib_header = struct.pack('<IiiHHIIiiII', 40, width, -height, 1, bpp, 0, len(raw_bytes), 2835, 2835, 0, 0)
     return bmp_header + dib_header + raw_bytes
 
+def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
+    return [int(text) if text.isdigit() else text.lower() for text in _nsre.split(s)]
+
 class ComicArchive:
-    @staticmethod
-    def get_pages(filepath):
+    _active_filepath = None
+    _active_pdf = None
+    _active_zip = None
+    _page_cache = {} # (filepath, page_filename) -> bytes
+    _MAX_CACHE_ITEMS = 6
+
+    @classmethod
+    def close_active(cls):
+        if cls._active_pdf:
+            try:
+                cls._active_pdf.close()
+            except Exception:
+                pass
+            cls._active_pdf = None
+        if cls._active_zip:
+            try:
+                cls._active_zip.close()
+            except Exception:
+                pass
+            cls._active_zip = None
+        cls._active_filepath = None
+        cls._page_cache.clear()
+
+    @classmethod
+    def get_open_pdf(cls, filepath):
+        if cls._active_filepath == filepath and cls._active_pdf is not None:
+            return cls._active_pdf
+        cls.close_active()
+        try:
+            import pypdfium2 as pdfium
+            cls._active_pdf = pdfium.PdfDocument(filepath)
+            cls._active_filepath = filepath
+            return cls._active_pdf
+        except Exception as e:
+            log_debug(f"get_open_pdf error: {e}")
+            return None
+
+    @classmethod
+    def get_open_zip(cls, filepath):
+        if cls._active_filepath == filepath and cls._active_zip is not None:
+            return cls._active_zip
+        cls.close_active()
+        try:
+            cls._active_zip = zipfile.ZipFile(filepath, 'r')
+            cls._active_filepath = filepath
+            return cls._active_zip
+        except Exception as e:
+            log_debug(f"get_open_zip error: {e}")
+            return None
+
+    @classmethod
+    def get_pages(cls, filepath):
         pages = []
         valid_exts = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
         ext = os.path.splitext(filepath)[1].lower()
         
         # 0. Dedicated PDF Handler
         if ext == '.pdf':
-            # Option A: pypdfium2 (Direct Google PDFium engine)
-            try:
-                import pypdfium2 as pdfium
-                pdf = pdfium.PdfDocument(filepath)
-                count = len(pdf)
-                pdf.close()
-                if count > 0:
-                    return [f"page_{i+1}" for i in range(count)]
-            except Exception as e:
-                log_debug(f"PDF get_pages pypdfium2 error: {e}")
+            pdf = cls.get_open_pdf(filepath)
+            if pdf is not None:
+                try:
+                    count = len(pdf)
+                    if count > 0:
+                        return [f"page_{i+1}" for i in range(count)]
+                except Exception as e:
+                    log_debug(f"PDF get_pages pypdfium2 error: {e}")
             # Option B: Scan PDF metadata
             try:
                 with open(filepath, 'rb') as f:
@@ -222,22 +276,27 @@ class ComicArchive:
                 log_debug(f"PDF get_pages scan error: {e}")
             return ["page_1"]
 
-        # 1. Fast built-in path for CBZ / ZIP
-        if ext in ('.cbz', '.zip'):
+        # 1. Built-in zipfile (Universal ZIP / CBZ)
+        zf = cls.get_open_zip(filepath)
+        if zf is not None:
             try:
-                with zipfile.ZipFile(filepath, 'r') as zf:
-                    for info in zf.infolist():
-                        if info.is_dir():
-                            continue
-                        if info.filename.startswith('__MACOSX') or '/.' in info.filename or info.filename.startswith('.'):
-                            continue
-                        if info.filename.lower().endswith(valid_exts):
-                            pages.append(info.filename)
-            except Exception:
-                pass
+                for info in zf.infolist():
+                    name = info.filename
+                    if name.endswith('/') or name.endswith('\\'):
+                        continue
+                    if '__MACOSX' in name or '/.' in name or name.startswith('.'):
+                        continue
+                    if name.lower().endswith(valid_exts):
+                        pages.append(name)
+            except Exception as e:
+                log_debug(f"zipfile get_pages error: {e}")
         
-        # 2. Universal fallback for CBR, CB7, RAR, 7Z, etc. using 7zzs
-        if not pages and os.path.exists(SEVEN_Z_BIN):
+        if pages:
+            pages.sort(key=natural_sort_key)
+            return pages
+
+        # 2. Universal 7-Zip (7zzs) for CBR, CB7, RAR, 7Z, TAR, etc.
+        if os.path.exists(SEVEN_Z_BIN):
             try:
                 try:
                     os.chmod(SEVEN_Z_BIN, 0o755)
@@ -257,71 +316,112 @@ class ComicArchive:
                         is_dir = True
                     elif line == '':
                         if current_path and not is_dir:
-                            if not (current_path.startswith('__MACOSX') or '/.' in current_path or current_path.startswith('.')):
+                            if not ('__MACOSX' in current_path or '/.' in current_path or current_path.startswith('.')):
                                 if current_path.lower().endswith(valid_exts):
                                     pages.append(current_path)
                         current_path = None
                         is_dir = False
                 if current_path and not is_dir:
-                    if not (current_path.startswith('__MACOSX') or '/.' in current_path or current_path.startswith('.')):
+                    if not ('__MACOSX' in current_path or '/.' in current_path or current_path.startswith('.')):
                         if current_path.lower().endswith(valid_exts):
                             pages.append(current_path)
-            except Exception:
-                pass
+            except Exception as e:
+                log_debug(f"7zzs get_pages error: {e}")
                 
+        if pages:
+            pages.sort(key=natural_sort_key)
+            return pages
+
+        # 3. Dedicated unrar binary fallback for CBR / RAR
+        if os.path.exists(UNRAR_BIN):
+            try:
+                try:
+                    os.chmod(UNRAR_BIN, 0o755)
+                except Exception:
+                    pass
+                p = subprocess.Popen([UNRAR_BIN, 'vb', filepath], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='ignore')
+                stdout, _ = p.communicate()
+                for line in stdout.splitlines():
+                    name = line.strip()
+                    if name and not ('__MACOSX' in name or '/.' in name or name.startswith('.')):
+                        if name.lower().endswith(valid_exts):
+                            pages.append(name)
+            except Exception as e:
+                log_debug(f"unrar get_pages error: {e}")
+
         pages.sort(key=natural_sort_key)
         return pages
 
-    @staticmethod
-    def read_image_data(filepath, page_filename):
+    @classmethod
+    def read_image_data(cls, filepath, page_filename):
+        cache_key = (filepath, page_filename)
+        if cache_key in cls._page_cache:
+            return cls._page_cache[cache_key]
+
         ext = os.path.splitext(filepath)[1].lower()
+        img_data = None
         
-        # 0. PDF Page Renderer
+        # 0. Dedicated PDF Page Renderer (Ultra Fast Screen-fit Rasterizer)
         if ext == '.pdf':
             try:
                 page_num = int(page_filename.replace("page_", ""))
             except Exception:
                 page_num = 1
                 
-            # Option A: pypdfium2 (Direct Google PDFium Engine -> Zero Dependencies BMP)
-            try:
-                import pypdfium2 as pdfium
-                pdf = pdfium.PdfDocument(filepath)
-                page = pdf[page_num - 1]
-                # Render 32-bit BGRA explicitly
-                bitmap = page.render(scale=2.0, prefer_bgrx=True)
-                raw_bytes = bytes(bitmap.buffer)
-                w = bitmap.width
-                h = bitmap.height
-                bpp = bitmap.n_channels * 8
-                pdf.close()
-                if raw_bytes and w > 0 and h > 0:
-                    return bitmap_to_bmp(raw_bytes, w, h, bpp)
-                else:
-                    log_debug(f"Empty PDF bitmap on page {page_num}")
-            except Exception as e:
-                import traceback
-                log_debug(f"PDF render exception p{page_num}: {e}\n{traceback.format_exc()}")
-            return None
+            pdf = cls.get_open_pdf(filepath)
+            if pdf is not None:
+                try:
+                    page = pdf[page_num - 1]
+                    pw, ph = page.get_size()
+                    # Calculate crisp 1:1 scale for 1024x768 screen (max scale 1.4 for peak sharpness without wasting CPU)
+                    scale = max(1.0, min(1.4, 1024.0 / max(1.0, pw)))
+                    bitmap = page.render(scale=scale, prefer_bgrx=True)
+                    raw_bytes = bytes(bitmap.buffer)
+                    w = bitmap.width
+                    h = bitmap.height
+                    bpp = bitmap.n_channels * 8
+                    if raw_bytes and w > 0 and h > 0:
+                        img_data = bitmap_to_bmp(raw_bytes, w, h, bpp)
+                except Exception as e:
+                    import traceback
+                    log_debug(f"PDF render exception p{page_num}: {e}\n{traceback.format_exc()}")
 
-        # 1. Fast built-in path for CBZ / ZIP
-        if ext in ('.cbz', '.zip'):
-            try:
-                with zipfile.ZipFile(filepath, 'r') as zf:
-                    return zf.read(page_filename)
-            except Exception:
-                pass
+        # 1. Built-in zipfile (Universal ZIP / CBZ)
+        if not img_data and ext in ('.cbz', '.zip'):
+            zf = cls.get_open_zip(filepath)
+            if zf is not None:
+                try:
+                    img_data = zf.read(page_filename)
+                except Exception:
+                    pass
         
-        # 2. Extract directly to stdout in memory via 7zzs stream
-        if os.path.exists(SEVEN_Z_BIN):
+        # 2. Universal 7-Zip stream (7zzs)
+        if not img_data and os.path.exists(SEVEN_Z_BIN):
             try:
                 p = subprocess.Popen([SEVEN_Z_BIN, 'e', '-so', filepath, page_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 stdout, _ = p.communicate()
                 if stdout:
-                    return stdout
-            except Exception:
-                pass
-        return None
+                    img_data = stdout
+            except Exception as e:
+                log_debug(f"7zzs extract error: {e}")
+
+        # 3. Dedicated unrar stream
+        if not img_data and os.path.exists(UNRAR_BIN):
+            try:
+                p = subprocess.Popen([UNRAR_BIN, 'p', '-inul', '-idq', filepath, page_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = p.communicate()
+                if stdout:
+                    img_data = stdout
+            except Exception as e:
+                log_debug(f"unrar extract error: {e}")
+
+        if img_data:
+            if len(cls._page_cache) >= cls._MAX_CACHE_ITEMS:
+                oldest_k = next(iter(cls._page_cache))
+                del cls._page_cache[oldest_k]
+            cls._page_cache[cache_key] = img_data
+
+        return img_data
 
 def main():
     sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO | sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER)
@@ -462,9 +562,13 @@ def main():
         pan_y = max(0, min(pan_y, max_pan_y))
 
     def load_book(filepath):
-        nonlocal book_pages, current_page_idx, pan_x, pan_y, zoom_level, current_font_size, current_filepath
+        nonlocal book_pages, current_page_idx, pan_x, pan_y, zoom_level, current_font_size, current_filepath, loaded_page_idx, loaded_texture
         book_pages = []
-        
+        loaded_page_idx = -1
+        if loaded_texture:
+            sdl2.SDL_DestroyTexture(loaded_texture)
+            loaded_texture = None
+            
         save_data = load_save(filepath)
         current_page_idx = save_data.get("scroll_y", 0)
         current_font_size = save_data.get("font_size", 34)
@@ -475,6 +579,7 @@ def main():
         
         try:
             pages = ComicArchive.get_pages(filepath)
+            log_debug(f"load_book '{filepath}': found {len(pages) if pages else 0} pages")
             if not pages:
                 return False
                 
@@ -482,6 +587,8 @@ def main():
             current_page_idx = max(0, min(current_page_idx, len(book_pages) - 1))
             return True
         except Exception as e:
+            import traceback
+            log_debug(f"load_book exception '{filepath}': {e}\n{traceback.format_exc()}")
             return False
 
     running = True
