@@ -136,7 +136,7 @@ def get_directory_contents(path):
         items = os.listdir(path)
         folders = []
         files = []
-        valid_exts = ['.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar']
+        valid_exts = ['.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar', '.pdf']
         for item in items:
             full_path = os.path.join(path, item)
             if os.path.isdir(full_path):
@@ -170,13 +170,25 @@ def draw_book_icon(renderer, x, y, color, background):
 import zipfile
 import io
 import re
+import struct
 import subprocess
 
 BIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin")
 SEVEN_Z_BIN = os.path.join(BIN_DIR, "7zzs") if os.path.exists(os.path.join(BIN_DIR, "7zzs")) else os.path.join(BIN_DIR, "7zz")
 
-def natural_sort_key(s, _nsre=re.compile('([0-9]+)')):
-    return [int(text) if text.isdigit() else text.lower() for text in _nsre.split(s)]
+def log_debug(msg):
+    try:
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug.log")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{msg}\n")
+    except Exception:
+        pass
+
+def bitmap_to_bmp(raw_bytes, width, height, bpp=32):
+    file_size = 54 + len(raw_bytes)
+    bmp_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
+    dib_header = struct.pack('<IiiHHIIiiII', 40, width, -height, 1, bpp, 0, len(raw_bytes), 2835, 2835, 0, 0)
+    return bmp_header + dib_header + raw_bytes
 
 class ComicArchive:
     @staticmethod
@@ -185,6 +197,31 @@ class ComicArchive:
         valid_exts = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp')
         ext = os.path.splitext(filepath)[1].lower()
         
+        # 0. Dedicated PDF Handler
+        if ext == '.pdf':
+            # Option A: pypdfium2 (Direct Google PDFium engine)
+            try:
+                import pypdfium2 as pdfium
+                pdf = pdfium.PdfDocument(filepath)
+                count = len(pdf)
+                pdf.close()
+                if count > 0:
+                    return [f"page_{i+1}" for i in range(count)]
+            except Exception as e:
+                log_debug(f"PDF get_pages pypdfium2 error: {e}")
+            # Option B: Scan PDF metadata
+            try:
+                with open(filepath, 'rb') as f:
+                    content = f.read(2 * 1024 * 1024)
+                    match = re.findall(rb'/Count\s+(\d+)', content)
+                    if match:
+                        count = max(int(m) for m in match)
+                        if count > 0:
+                            return [f"page_{i+1}" for i in range(count)]
+            except Exception as e:
+                log_debug(f"PDF get_pages scan error: {e}")
+            return ["page_1"]
+
         # 1. Fast built-in path for CBZ / ZIP
         if ext in ('.cbz', '.zip'):
             try:
@@ -238,6 +275,36 @@ class ComicArchive:
     @staticmethod
     def read_image_data(filepath, page_filename):
         ext = os.path.splitext(filepath)[1].lower()
+        
+        # 0. PDF Page Renderer
+        if ext == '.pdf':
+            try:
+                page_num = int(page_filename.replace("page_", ""))
+            except Exception:
+                page_num = 1
+                
+            # Option A: pypdfium2 (Direct Google PDFium Engine -> Zero Dependencies BMP)
+            try:
+                import pypdfium2 as pdfium
+                pdf = pdfium.PdfDocument(filepath)
+                page = pdf[page_num - 1]
+                # Render 32-bit BGRA explicitly
+                bitmap = page.render(scale=2.0, prefer_bgrx=True)
+                raw_bytes = bytes(bitmap.buffer)
+                w = bitmap.width
+                h = bitmap.height
+                bpp = bitmap.n_channels * 8
+                pdf.close()
+                if raw_bytes and w > 0 and h > 0:
+                    return bitmap_to_bmp(raw_bytes, w, h, bpp)
+                else:
+                    log_debug(f"Empty PDF bitmap on page {page_num}")
+            except Exception as e:
+                import traceback
+                log_debug(f"PDF render exception p{page_num}: {e}\n{traceback.format_exc()}")
+            return None
+
+        # 1. Fast built-in path for CBZ / ZIP
         if ext in ('.cbz', '.zip'):
             try:
                 with zipfile.ZipFile(filepath, 'r') as zf:
@@ -245,7 +312,7 @@ class ComicArchive:
             except Exception:
                 pass
         
-        # Extract directly to stdout in memory via 7zzs stream
+        # 2. Extract directly to stdout in memory via 7zzs stream
         if os.path.exists(SEVEN_Z_BIN):
             try:
                 p = subprocess.Popen([SEVEN_Z_BIN, 'e', '-so', filepath, page_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
