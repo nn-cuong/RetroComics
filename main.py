@@ -163,6 +163,36 @@ def get_book_display_metadata(filename):
     author = re.sub(r"\s+AU$", "", author)
     return title.strip(), author
 
+def get_reading_header_metadata(filepath):
+    """Extract clean (book_title, chapter) without author and without file extension."""
+    filename = os.path.basename(filepath)
+    stem = os.path.splitext(filename)[0]
+    parent = os.path.basename(os.path.dirname(filepath))
+
+    # Match chapter keywords: Chap, Chapter, Tập, Vol, Volume, Hồi...
+    chap_match = re.search(r'\b(Chap(?:ter)?\.?\s*\d+|Vol(?:ume)?\.?\s*\d+|Tập\s*\d+|Hồi\s*\d+|Ch\.\s*\d+)\b', stem, re.IGNORECASE)
+
+    parts = [p.strip() for p in stem.split(' - ') if p.strip()]
+
+    if len(parts) >= 3:
+        # e.g. "One Piece - Chap 1050 - Oda" or "Batman - Year One - Deluxe"
+        return parts[0], parts[1]
+    elif len(parts) == 2:
+        if chap_match and chap_match.group(0) in parts[1]:
+            return parts[0], parts[1]
+        if parent and parent.lower() not in ['books', 'sdcard', '']:
+            return parent, parts[0]
+        return parts[0], ""
+
+    if chap_match:
+        chap_str = chap_match.group(0)
+        title = stem.split(chap_str)[0].strip(' -_')
+        if not title and parent and parent.lower() not in ['books', 'sdcard', '']:
+            title = parent
+        return (title if title else stem), chap_str
+
+    return stem, ""
+
 def draw_book_icon(renderer, x, y, color, background):
     renderer.fill((x, y, 28, 36), color)
     renderer.fill((x + 6, y + 5, 4, 26), background)
@@ -995,10 +1025,13 @@ def main():
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, loaded_texture, None, dst_rect)
                 
                 if show_hud:
-                    # Top HUD
-                    book_name = os.path.basename(current_filepath)
+                    # Top HUD: Tên sách - Chap đang đọc - Page (No author, no extension)
+                    book_title, chap_name = get_reading_header_metadata(current_filepath)
                     total_pages = len(book_pages)
-                    hud_top = f"{book_name} - Page {current_page_idx + 1}/{total_pages}"
+                    if chap_name:
+                        hud_top = f"{book_title} - {chap_name} - Page {current_page_idx + 1}/{total_pages}"
+                    else:
+                        hud_top = f"{book_title} - Page {current_page_idx + 1}/{total_pages}"
                     tex, tw, th = render_text(hud_top, font_small, theme["text"])
                     if tex:
                         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, 15, min(tw, reader_w-40), th))
