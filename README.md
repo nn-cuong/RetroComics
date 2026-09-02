@@ -1,6 +1,6 @@
 # RetroComics App
 
-Một ứng dụng đọc truyện tranh (RetroComics) mã nguồn mở, được tối ưu hóa đặc biệt cho thiết bị cầm tay (như Trimui Brick Pro). Ứng dụng là một bản "sinh đôi" chuyên dụng của RetroRead.
+Một ứng dụng đọc truyện tranh (RetroComics) mã nguồn mở, được tối ưu hóa đặc biệt cho Trimui Brick Pro. Ứng dụng là một bản "sinh đôi" chuyên dụng của RetroRead.
 
 ## 🌟 Tính năng chính
 - Hỗ trợ đa dạng các định dạng truyện tranh nén: **CBZ, CBR, CB7, ZIP, RAR, 7Z, CBT, TAR**.
