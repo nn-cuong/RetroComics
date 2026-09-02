@@ -22,17 +22,21 @@ export SDL_NOMOUSE=1
 cd "$APP_DIR"
 
 PY=""
-# 1. Bundled Python in App (Direct Instant Boot - 0ms probe overhead)
-if [ -f "$APP_DIR/python/bin/python3" ]; then
+# 1. High-Speed System Python (Loads from internal eMMC/RAM in ~0.1s like RetroHub)
+if [ -x "/usr/bin/python3" ]; then
+    PY="/usr/bin/python3"
+    export PYTHONPATH="$APP_DIR/vendor:$APP_DIR:$PYTHONPATH"
+elif [ -x "/mnt/SDCARD/System/bin/python3" ]; then
+    PY="/mnt/SDCARD/System/bin/python3"
+    export PYTHONPATH="$APP_DIR/vendor:$APP_DIR:$PYTHONPATH"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="$(command -v python3)"
+    export PYTHONPATH="$APP_DIR/vendor:$APP_DIR:$PYTHONPATH"
+# 2. Standalone Bundled Python Fallback (For devices without system Python)
+elif [ -f "$APP_DIR/python/bin/python3" ]; then
     PY="$APP_DIR/python/bin/python3"
     export PYTHONHOME="$APP_DIR/python"
     export PYTHONPATH="$APP_DIR/python/lib/python3.11:$APP_DIR/vendor:$APP_DIR"
-elif [ -f "/mnt/SDCARD/System/bin/python3" ]; then
-    PY="/mnt/SDCARD/System/bin/python3"
-elif [ -f "/usr/bin/python3" ]; then
-    PY="/usr/bin/python3"
-else
-    PY=$(command -v python3)
 fi
 
 if [ -z "$PY" ]; then
