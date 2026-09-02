@@ -2,5 +2,5 @@
     "label": "RetroComics",
     "icon": "icon.png",
     "launch": "launch.sh",
-    "description": "A comfortable comic reader for CBZ archives."
+    "description": "A comfortable comic reader for CBZ, CBR, ZIP archives."
 }
