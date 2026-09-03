@@ -1890,21 +1890,35 @@ def main():
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, loaded_texture, None, dst_rect)
                 
                 if show_hud:
-                    # Top HUD: Full filename - Page
+                    # Fixed high-contrast dark glassmorphic Top Header Bar (100% visible on both white and black pages)
+                    sdl2.SDL_SetRenderDrawBlendMode(renderer.sdlrenderer, sdl2.SDL_BLENDMODE_BLEND)
+                    sdl2.SDL_SetRenderDrawColor(renderer.sdlrenderer, 15, 15, 18, 215)
+                    sdl2.SDL_RenderFillRect(renderer.sdlrenderer, sdl2.SDL_Rect(0, 0, reader_w, 52))
+                    sdl2.SDL_SetRenderDrawColor(renderer.sdlrenderer, 255, 255, 255, 35)
+                    sdl2.SDL_RenderFillRect(renderer.sdlrenderer, sdl2.SDL_Rect(0, 51, reader_w, 1))
+
+                    # Top HUD: Title - Page
                     book_title, _ = get_book_display_metadata(os.path.basename(current_filepath))
                     total_pages = len(book_pages)
-                    hud_top = f"{book_title} - Page {current_page_idx + 1}/{total_pages}"
-                    tex, tw, th = render_text(hud_top, font_small, theme["text"])
+                    hud_top = f"{book_title}  •  Page {current_page_idx + 1}/{total_pages}"
+                    hud_text_color = sdl2.ext.Color(255, 255, 255)
+                    tex, tw, th = render_text(hud_top, font_small, hud_text_color)
                     if tex:
-                        sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, 15, min(tw, reader_w-40), th))
+                        sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(24, (52 - th) // 2, min(tw, reader_w - 48), th))
                         sdl2.SDL_DestroyTexture(tex)
                     
-                    # Bottom HUD
-                    footer = f"L2/R2: Jump | L/R: Turn | Y: Zoom In | B: Zoom Out | X: Rotate | A: HUD | SELECT: LIB"
-                    tex, tw, th = render_text(footer, font_small, theme["text"])
-                    if tex:
-                        sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, reader_h - 45, min(tw, reader_w-40), th))
-                        sdl2.SDL_DestroyTexture(tex)
+                    # Fixed high-contrast dark glassmorphic Bottom Footer Bar
+                    sdl2.SDL_SetRenderDrawColor(renderer.sdlrenderer, 15, 15, 18, 215)
+                    sdl2.SDL_RenderFillRect(renderer.sdlrenderer, sdl2.SDL_Rect(0, reader_h - 48, reader_w, 48))
+                    sdl2.SDL_SetRenderDrawColor(renderer.sdlrenderer, 255, 255, 255, 35)
+                    sdl2.SDL_RenderFillRect(renderer.sdlrenderer, sdl2.SDL_Rect(0, reader_h - 48, reader_w, 1))
+
+                    # Bottom HUD Text
+                    footer = f"L2/R2: Jump  |  L/R: Turn  |  Y: Zoom In  |  B: Zoom Out  |  X: Rotate  |  A: HUD  |  SELECT: LIB"
+                    tex_bot, bw, bh = render_text(footer, font_small, hud_text_color)
+                    if tex_bot:
+                        sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_bot, None, sdl2.SDL_Rect(24, reader_h - 48 + (48 - bh) // 2, min(bw, reader_w - 48), bh))
+                        sdl2.SDL_DestroyTexture(tex_bot)
 
                 drawing_rotated = (reader_rotation_idx != 0)
                 if drawing_rotated:
