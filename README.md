@@ -7,9 +7,6 @@ Một ứng dụng đọc truyện tranh, Manga, Comics và tài liệu PDF mã 
 ## 🌟 Tính năng nổi bật
 
 - **Hỗ trợ định dạng toàn diện:** Đọc trực tiếp các định dạng truyện tranh và tệp nén thông dụng: **PDF, CBZ, CBR, CB7, ZIP, RAR, 7Z, CBT, TAR**, cùng các thư mục ảnh rời (`.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`).
-- **Động cơ In-Memory độc quyền siêu tốc:**
-  - **Google PDFium Engine (ARM64):** Tích hợp thư viện kết xuất PDF chuyên dụng, giải mã từng trang PDF trực tiếp vào RAM/VRAM với độ nét tối đa, giữ nguyên 100% bố cục, hình ảnh và font chữ.
-  - **Xử lý tệp nén trực tiếp trong RAM:** Đọc stream trực tiếp từ tệp nén qua `7zzs` và `unrar` nhúng sẵn. **Tuyệt đối không giải nén hàng nghìn tệp ảnh tạm ra thẻ nhớ SD**, giúp mở truyện tức thì (0ms trễ I/O) và chống hao mòn bộ nhớ flash của thẻ nhớ.
 - **Chế độ hiển thị thư viện kép (Dual-Mode Library View):**
   - Chuyển đổi linh hoạt giữa **List View** (Danh sách truyền thống với icon truyện đồng bộ) và **Grid View** (Lưới bìa 4×2, 8 cuốn/trang với ảnh bìa thực tế) chỉ bằng một nút bấm (**Nút B vật lý**).
   - Tự động trích xuất ảnh bìa thực tế từ trang đầu của tệp truyện tranh và lưu bộ nhớ đệm RAM thông minh.
@@ -24,14 +21,9 @@ Một ứng dụng đọc truyện tranh, Manga, Comics và tài liệu PDF mã 
   4. **Warm Night** — Ánh sáng hổ phách ấm giúp bảo vệ mắt ban đêm.
   5. **AMOLED Black** — Nền đen sâu tối giản, tiết kiệm pin.
   6. **Forest** — Xanh rêu thư viện thanh bình và tĩnh lặng.
-  - Đổi theme tức thì bằng **Nút Y** trong Thư viện, tự động lưu vào `comic_saves.json`.
 - **Trình đọc chuyên sâu (Reader Experience):**
   - **Phóng to & Di chuyển (Zoom & Pan):** Phóng to linh hoạt từ Fit-to-screen đến 8x bằng **Nút Y** (phóng to) và **Nút B** (thu nhỏ). Di chuyển quanh khung hình mượt mà bằng D-pad hoặc Analog Joystick.
   - **Xoay màn hình 4 hướng (0°, 90°, 180°, 270°):** Nhấn **Nút X** để xoay máy đọc ngang/dọc tùy ý; hệ thống tự động đồng bộ chiều điều khiển D-pad và Joystick theo đúng hướng mắt nhìn.
-  - **Lật trang tức thì:** Nhấn **L1 / R1** hoặc D-pad Trái/Phải để chuyển trang mượt mà ở tốc độ 60 FPS nhờ cơ chế bộ đệm LRU.
-  - **Nhảy trang nhanh (Page Jump Dialog):** Nhấn nút vai **L2 / R2** để mở cửa sổ nhảy nhanh đến bất kỳ trang nào trong cuốn truyện.
-  - **Ẩn / Hiện thanh HUD:** Nhấn **Nút A** để xem thông tin trang, chương và thanh điều khiển hoặc ẩn đi để đọc tràn viền 100%.
-  - **Tự động lưu tiến trình:** Tự động ghi nhớ trang đang đọc dở cho từng cuốn truyện riêng biệt.
 
 ---
 
