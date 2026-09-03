@@ -12,8 +12,6 @@ Một ứng dụng đọc truyện tranh, Manga, Comics và tài liệu PDF mã 
   - Tự động trích xuất ảnh bìa thực tế từ trang đầu của tệp truyện tranh và lưu bộ nhớ đệm RAM thông minh.
   - Thẻ bìa Hardcover sang trọng với tên sách dập chìm thanh lịch khi tệp chưa có ảnh bìa hoặc đang trong quá trình quét.
   - Tự động lưu chế độ xem yêu thích vào bộ nhớ cấu hình.
-- **Tự động cuộn chữ Marquee:** Khi tên truyện dài vượt quá chiều rộng thẻ chọn, văn bản sẽ tự động chạy chữ qua lại mượt mà khi con trỏ dừng trên cuốn truyện đó.
-- **Thanh tiêu đề 1 dòng tinh gọn:** Tự động loại bỏ tên tác giả (`- Tác giả`) ở đuôi tên tệp và phần mở rộng file, hiển thị tên truyện rõ ràng và gọn gàng nhất.
 - **6 Bộ chủ đề màu sắc chuyên sâu:**
   1. **Vintage Dark** *(Mặc định)* — Nâu cổ điển ấm áp.
   2. **Night Mode** — Xám than hiện đại, độ tương phản cao.
