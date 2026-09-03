@@ -1378,20 +1378,18 @@ def main():
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y: Zoom In
                         vw, vh = get_reader_view_size()
                         if img_w > 0 and img_h > 0:
-                            min_zoom = min(vw / float(img_w), vh / float(img_h))
+                            fit_page = min(vw / float(img_w), vh / float(img_h))
                             if zoom_level <= 0:
                                 zoom_level = vw / float(img_w)
-                            zoom_level = min(zoom_level * 1.25, min_zoom * 8.0)
+                            zoom_level = min(zoom_level * 1.25, fit_page * 8.0)
                             needs_redraw = True
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B: Zoom Out
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B: Zoom Out (until fit 2 edges)
                         vw, vh = get_reader_view_size()
                         if img_w > 0 and img_h > 0:
-                            min_zoom = min(vw / float(img_w), vh / float(img_h))
-                            fit_w = vw / float(img_w)
-                            target_min = min(fit_w, min_zoom)
+                            fit_page = min(vw / float(img_w), vh / float(img_h))
                             if zoom_level <= 0:
-                                zoom_level = fit_w
-                            zoom_level = max(zoom_level / 1.25, target_min * 0.5)
+                                zoom_level = vw / float(img_w)
+                            zoom_level = max(zoom_level / 1.25, fit_page)
                             scaled_w = int(img_w * zoom_level)
                             scaled_h = int(img_h * zoom_level)
                             max_pan_x = max(0, scaled_w - vw)
