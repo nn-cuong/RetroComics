@@ -4,6 +4,7 @@ import textwrap
 import traceback
 import json
 import re
+import threading
 
 SAVES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "comic_saves.json")
 SETTINGS_KEY = "__retrocomics_settings__"
@@ -92,6 +93,13 @@ THEMES = [
         "text": sdl2.SDL_Color(217, 226, 213, 255),# #D9E2D5
         "header": sdl2.ext.Color(16, 23, 17),      # #101711
         "sel": sdl2.ext.Color(73, 98, 79),         # #49624F
+    },
+    {
+        "name": "Coastal Earth",
+        "bg": sdl2.ext.Color(44, 54, 57),          # #2C3639 Dark Charcoal Blue
+        "text": sdl2.SDL_Color(220, 215, 201, 255),# #DCD7C9 Warm Ivory
+        "header": sdl2.ext.Color(63, 78, 79),      # #3F4E4F Muted Slate Green
+        "sel": sdl2.ext.Color(162, 123, 92),       # #A27B5C Dusty Earth Brown
     }
 ]
 
@@ -168,6 +176,19 @@ LIBRARY_THEMES = [
         "sel_bg": sdl2.ext.Color(41, 54, 45),      # #29362D
         "sel_text": sdl2.SDL_Color(240, 244, 237, 255),# #F0F4ED
         "sel_sec": sdl2.SDL_Color(184, 195, 184, 255), # #B8C3B8
+    },
+    {
+        "name": "Coastal Earth",
+        "bg": sdl2.ext.Color(44, 54, 57),          # #2C3639 Dark Charcoal Blue
+        "header": sdl2.ext.Color(63, 78, 79),      # #3F4E4F Muted Slate Green
+        "divider": sdl2.ext.Color(74, 91, 92),     # #4A5B5C Muted Slate Divider
+        "text": sdl2.SDL_Color(220, 215, 201, 255),# #DCD7C9 Warm Ivory
+        "secondary": sdl2.SDL_Color(170, 166, 155, 255),# #AAA69B Muted Ivory
+        "accent": sdl2.ext.Color(162, 123, 92),    # #A27B5C Dusty Earth Brown
+        "sel_border": sdl2.ext.Color(162, 123, 92),# #A27B5C Dusty Earth Brown
+        "sel_bg": sdl2.ext.Color(58, 68, 71),      # #3A4447 Deep Slate
+        "sel_text": sdl2.SDL_Color(240, 237, 228, 255),# #F0EDE4 Pure Ivory
+        "sel_sec": sdl2.SDL_Color(190, 185, 172, 255), # #BEB9AC
     }
 ]
 
@@ -225,26 +246,31 @@ STATE_READER = 1
 STATE_TOC = 2
 STATE_QUIT_CONFIRM = 3
 STATE_PAGE_SELECT = 4
+STATE_ABOUT = 5
 
 def get_directory_contents(path):
+    folders = []
+    files = []
+    valid_exts_set = {'.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar', '.pdf'}
     try:
-        items = os.listdir(path)
-        folders = []
-        files = []
-        valid_exts = ['.cbz', '.zip', '.cbr', '.rar', '.cb7', '.7z', '.cbt', '.tar', '.pdf']
-        for item in items:
-            full_path = os.path.join(path, item)
-            if os.path.isdir(full_path):
-                folders.append(item)
-            else:
-                ext = os.path.splitext(item)[1].lower()
-                if ext in valid_exts:
-                    files.append(item)
-        folders.sort(key=str.lower)
-        files.sort(key=str.lower)
-        return folders, files
-    except Exception as e:
-        return [], []
+        with os.scandir(path) as it:
+            for entry in it:
+                if entry.name.startswith('.'):
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        folders.append(entry.name)
+                    else:
+                        ext = os.path.splitext(entry.name)[1].lower()
+                        if ext in valid_exts_set:
+                            files.append(entry.name)
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    folders.sort(key=str.lower)
+    files.sort(key=str.lower)
+    return folders, files
 
 def get_book_display_metadata(filename):
     """Derive library label from a filename without changing the real path."""
@@ -324,50 +350,80 @@ class ComicArchive:
     _active_zip = None
     _page_cache = {} # (filepath, page_filename) -> bytes
     _MAX_CACHE_ITEMS = 6
+    _archive_lock = threading.RLock()
 
     @classmethod
     def close_active(cls):
-        if cls._active_pdf:
-            try:
-                cls._active_pdf.close()
-            except Exception:
-                pass
-            cls._active_pdf = None
-        if cls._active_zip:
-            try:
-                cls._active_zip.close()
-            except Exception:
-                pass
-            cls._active_zip = None
-        cls._active_filepath = None
-        cls._page_cache.clear()
+        with cls._archive_lock:
+            if cls._active_pdf:
+                try:
+                    cls._active_pdf.close()
+                except Exception:
+                    pass
+                cls._active_pdf = None
+            if cls._active_zip:
+                try:
+                    cls._active_zip.close()
+                except Exception:
+                    pass
+                cls._active_zip = None
+            cls._active_filepath = None
+            cls._page_cache.clear()
 
     @classmethod
     def get_open_pdf(cls, filepath):
-        if cls._active_filepath == filepath and cls._active_pdf is not None:
-            return cls._active_pdf
-        cls.close_active()
-        try:
-            import pypdfium2 as pdfium
-            cls._active_pdf = pdfium.PdfDocument(filepath)
-            cls._active_filepath = filepath
-            return cls._active_pdf
-        except Exception as e:
-            log_debug(f"get_open_pdf error: {e}")
-            return None
+        with cls._archive_lock:
+            if cls._active_filepath == filepath and cls._active_pdf is not None:
+                return cls._active_pdf
+            if cls._active_pdf:
+                try:
+                    cls._active_pdf.close()
+                except Exception:
+                    pass
+                cls._active_pdf = None
+            if cls._active_zip:
+                try:
+                    cls._active_zip.close()
+                except Exception:
+                    pass
+                cls._active_zip = None
+            cls._active_filepath = None
+            cls._page_cache.clear()
+            try:
+                import pypdfium2 as pdfium
+                cls._active_pdf = pdfium.PdfDocument(filepath)
+                cls._active_filepath = filepath
+                return cls._active_pdf
+            except Exception as e:
+                log_debug(f"get_open_pdf error: {e}")
+                return None
 
     @classmethod
     def get_open_zip(cls, filepath):
-        if cls._active_filepath == filepath and cls._active_zip is not None:
-            return cls._active_zip
-        cls.close_active()
-        try:
-            cls._active_zip = zipfile.ZipFile(filepath, 'r')
-            cls._active_filepath = filepath
-            return cls._active_zip
-        except Exception as e:
-            log_debug(f"get_open_zip error: {e}")
-            return None
+        with cls._archive_lock:
+            if cls._active_filepath == filepath and cls._active_zip is not None:
+                return cls._active_zip
+            if cls._active_pdf:
+                try:
+                    cls._active_pdf.close()
+                except Exception:
+                    pass
+                cls._active_pdf = None
+            if cls._active_zip:
+                try:
+                    cls._active_zip.close()
+                except Exception:
+                    pass
+                cls._active_zip = None
+            cls._active_filepath = None
+            cls._page_cache.clear()
+            try:
+                cls._active_zip = zipfile.ZipFile(filepath, 'r')
+                cls._active_filepath = filepath
+                return cls._active_zip
+            except Exception as e:
+                log_debug(f"get_open_zip error: {e}")
+                return None
 
     @classmethod
     def get_pages(cls, filepath):
@@ -475,10 +531,12 @@ class ComicArchive:
         return pages
 
     @classmethod
-    def read_image_data(cls, filepath, page_filename):
+    def read_image_data(cls, filepath, page_filename, is_thumb=False):
         cache_key = (filepath, page_filename)
-        if cache_key in cls._page_cache:
-            return cls._page_cache[cache_key]
+        if not is_thumb:
+            with cls._archive_lock:
+                if cache_key in cls._page_cache:
+                    return cls._page_cache[cache_key]
 
         ext = os.path.splitext(filepath)[1].lower()
         img_data = None
@@ -490,32 +548,36 @@ class ComicArchive:
             except Exception:
                 page_num = 1
                 
-            pdf = cls.get_open_pdf(filepath)
-            if pdf is not None:
-                try:
-                    page = pdf[page_num - 1]
-                    pw, ph = page.get_size()
-                    # Calculate crisp 1:1 scale for 1024x768 screen (max scale 1.4 for peak sharpness without wasting CPU)
-                    scale = max(1.0, min(1.4, 1024.0 / max(1.0, pw)))
-                    bitmap = page.render(scale=scale, prefer_bgrx=True)
-                    raw_bytes = bytes(bitmap.buffer)
-                    w = bitmap.width
-                    h = bitmap.height
-                    bpp = bitmap.n_channels * 8
-                    if raw_bytes and w > 0 and h > 0:
-                        img_data = bitmap_to_bmp(raw_bytes, w, h, bpp)
-                except Exception as e:
-                    import traceback
-                    log_debug(f"PDF render exception p{page_num}: {e}\n{traceback.format_exc()}")
+            with cls._archive_lock:
+                pdf = cls.get_open_pdf(filepath)
+                if pdf is not None:
+                    try:
+                        page = pdf[page_num - 1]
+                        pw, ph = page.get_size()
+                        if is_thumb:
+                            scale = min(264.0 / max(1.0, pw), 372.0 / max(1.0, ph))
+                        else:
+                            scale = max(1.0, min(1.4, 1024.0 / max(1.0, pw)))
+                        bitmap = page.render(scale=scale, prefer_bgrx=True)
+                        raw_bytes = bytes(bitmap.buffer)
+                        w = bitmap.width
+                        h = bitmap.height
+                        bpp = bitmap.n_channels * 8
+                        if raw_bytes and w > 0 and h > 0:
+                            img_data = bitmap_to_bmp(raw_bytes, w, h, bpp)
+                    except Exception as e:
+                        import traceback
+                        log_debug(f"PDF render exception p{page_num}: {e}\n{traceback.format_exc()}")
 
         # 1. Built-in zipfile (Universal ZIP / CBZ)
         if not img_data and ext in ('.cbz', '.zip'):
-            zf = cls.get_open_zip(filepath)
-            if zf is not None:
-                try:
-                    img_data = zf.read(page_filename)
-                except Exception:
-                    pass
+            with cls._archive_lock:
+                zf = cls.get_open_zip(filepath)
+                if zf is not None:
+                    try:
+                        img_data = zf.read(page_filename)
+                    except Exception:
+                        pass
         
         # 2. Universal 7-Zip stream (7zzs)
         if not img_data and os.path.exists(SEVEN_Z_BIN):
@@ -537,11 +599,12 @@ class ComicArchive:
             except Exception as e:
                 log_debug(f"unrar extract error: {e}")
 
-        if img_data:
-            if len(cls._page_cache) >= cls._MAX_CACHE_ITEMS:
-                oldest_k = next(iter(cls._page_cache))
-                del cls._page_cache[oldest_k]
-            cls._page_cache[cache_key] = img_data
+        if img_data and not is_thumb:
+            with cls._archive_lock:
+                if len(cls._page_cache) >= cls._MAX_CACHE_ITEMS:
+                    oldest_k = next(iter(cls._page_cache))
+                    del cls._page_cache[oldest_k]
+                cls._page_cache[cache_key] = img_data
 
         return img_data
 
@@ -615,32 +678,148 @@ def main():
     theme_idx = load_theme_idx()
     reader_rotation_idx = load_reader_rotation_idx()
     library_view_mode = load_library_view() # "list" or "grid"
-    cover_cache = {} # filepath -> (texture, orig_w, orig_h)
+    cover_cache = {}  # filepath -> (SDL_Texture, w, h)
+
+    # -----------------------------------------------------------------------
+    # Fast Async Cover System: background thread + disk cache + downscaling
+    # Cover cell on screen: 170x200 px. We store covers at 255x300 (1.5x for
+    # crisp rendering) -- 3/4-quality downscale of the source.
+    # -----------------------------------------------------------------------
+    import threading, hashlib
+    import queue as _queue_mod
+    COVER_CACHE_DIR = "/mnt/SDCARD/.cover_cache"
+    try:
+        os.makedirs(COVER_CACHE_DIR, exist_ok=True)
+    except Exception:
+        pass
+
+    def _cover_disk_path(fp):
+        h = hashlib.sha1(fp.encode("utf-8", errors="replace")).hexdigest()[:16]
+        return os.path.join(COVER_CACHE_DIR, h + ".bmp")
+
+    def _decode_cover(img_data):
+        """CPU-side: decode bytes -> SDL_Surface at full native resolution.
+        No downscaling: GPU handles display scaling at render time for max sharpness."""
+        rw = sdl2.SDL_RWFromConstMem(img_data, len(img_data))
+        src = sdlimage.IMG_Load_RW(rw, 1)
+        if not src:
+            return None, 0, 0
+        sw, sh = src.contents.w, src.contents.h
+        if sw <= 0 or sh <= 0:
+            sdl2.SDL_FreeSurface(src)
+            return None, 0, 0
+        return src, sw, sh
+
+    cover_pending        = set()              # guarded by _cover_q_lock
+    _cover_q             = _queue_mod.Queue() # blocking FIFO for workers
+    _cover_q_lock        = threading.Lock()   # guard cover_pending
+    cover_ready          = {}                 # filepath -> (surf,w,h) or (None,0,0)
+    cover_ready_lock     = threading.Lock()
+    cover_thread_running = [True]
+
+    def _cover_worker():
+        while cover_thread_running[0]:
+            try:
+                filepath = _cover_q.get(timeout=0.5)
+            except Exception:
+                continue
+            disk = _cover_disk_path(filepath)
+            img_data = None
+            if os.path.exists(disk):
+                try:
+                    with open(disk, "rb") as f:
+                        img_data = f.read()
+                except Exception:
+                    img_data = None
+            if not img_data:
+                try:
+                    pages = ComicArchive.get_pages(filepath)
+                    if pages:
+                        img_data = ComicArchive.read_image_data(filepath, pages[0])
+                except Exception as e:
+                    log_debug(f"cover worker error '{filepath}': {e}")
+            if not img_data:
+                with cover_ready_lock:
+                    cover_ready[filepath] = (None, 0, 0)
+                _cover_q.task_done()
+                continue
+            surf, dw, dh = _decode_cover(img_data)
+            if surf and dw > 0:
+                if not os.path.exists(disk):
+                    try:
+                        sdl2.SDL_SaveBMP(surf, disk.encode("utf-8"))
+                    except Exception:
+                        pass
+                with cover_ready_lock:
+                    cover_ready[filepath] = (surf, dw, dh)
+            else:
+                if surf:
+                    sdl2.SDL_FreeSurface(surf)
+                with cover_ready_lock:
+                    cover_ready[filepath] = (None, 0, 0)
+            _cover_q.task_done()
+
+    # 3 parallel decode threads
+    _cover_threads = []
+    for _i in range(3):
+        _t = threading.Thread(target=_cover_worker, daemon=True)
+        _t.start()
+        _cover_threads.append(_t)
+
+    def pump_cover_ready():
+        """Call once per frame: promote finished CPU surfaces -> GPU textures."""
+        with cover_ready_lock:
+            if not cover_ready:
+                return
+            batch = list(cover_ready.items())
+            cover_ready.clear()
+        for fp, result in batch:
+            if len(result) == 3 and result[0] is not None:
+                surf, dw, dh = result
+                tex = sdl2.SDL_CreateTextureFromSurface(renderer.sdlrenderer, surf)
+                sdl2.SDL_FreeSurface(surf)
+                cover_cache[fp] = (tex, dw, dh) if tex else (None, 0, 0)
+            else:
+                cover_cache[fp] = (None, 0, 0)
 
     def get_cover_texture(filepath):
+        """Non-blocking: returns cached texture or queues background load."""
         if filepath in cover_cache:
             return cover_cache[filepath]
-        try:
-            pages = ComicArchive.get_pages(filepath)
-            if pages:
-                img_data = ComicArchive.read_image_data(filepath, pages[0])
-                if img_data:
-                    rw = sdl2.SDL_RWFromConstMem(img_data, len(img_data))
-                    surf = sdlimage.IMG_Load_RW(rw, 1)
-                    if surf:
-                        w = surf.contents.w
-                        h = surf.contents.h
-                        tex = sdl2.SDL_CreateTextureFromSurface(renderer.sdlrenderer, surf)
-                        sdl2.SDL_FreeSurface(surf)
-                        if tex:
-                            cover_cache[filepath] = (tex, w, h)
-                            return (tex, w, h)
-        except Exception as e:
-            log_debug(f"get_cover_texture error '{filepath}': {e}")
-        cover_cache[filepath] = (None, 0, 0)
+        with cover_ready_lock:
+            already = filepath in cover_ready
+        if not already:
+            with _cover_q_lock:
+                if filepath not in cover_pending:
+                    cover_pending.add(filepath)
+                    _cover_q.put_nowait(filepath)
         return (None, 0, 0)
 
+    def prewarm_covers(item_list, path):
+        """Pre-queue all file items immediately when entering a directory."""
+        for item in item_list:
+            if not item["is_dir"]:
+                fp = os.path.join(path, item["name"])
+                if fp not in cover_cache:
+                    with cover_ready_lock:
+                        already = fp in cover_ready
+                    if not already:
+                        with _cover_q_lock:
+                            if fp not in cover_pending:
+                                cover_pending.add(fp)
+                                _cover_q.put_nowait(fp)
+
     def clear_cover_cache():
+        with _cover_q_lock:
+            cover_pending.clear()
+        while not _cover_q.empty():
+            try: _cover_q.get_nowait(); _cover_q.task_done()
+            except Exception: break
+        with cover_ready_lock:
+            for result in cover_ready.values():
+                if len(result) == 3 and result[0] is not None:
+                    sdl2.SDL_FreeSurface(result[0])
+            cover_ready.clear()
         for tex, _, _ in cover_cache.values():
             if tex:
                 sdl2.SDL_DestroyTexture(tex)
@@ -721,10 +900,194 @@ def main():
         max_pan_y = max(0, scaled_h - vh)
         pan_y = max(0, min(pan_y, max_pan_y))
 
+    COMIC_THUMB_CACHE_DIR = "/mnt/SDCARD/.comic_thumb_cache"
+    try:
+        os.makedirs(COMIC_THUMB_CACHE_DIR, exist_ok=True)
+    except Exception:
+        pass
+
+    def _comic_thumb_disk_path(fp, p_idx):
+        h = hashlib.sha1(f"{fp}:{p_idx}".encode("utf-8", errors="replace")).hexdigest()[:20]
+        return os.path.join(COMIC_THUMB_CACHE_DIR, f"{h}.bmp")
+
+    comic_thumb_cache = {}          # (filepath, page_idx) -> {"tex": tex, "w": w, "h": h, "last_used": cur_t}
+    _comic_thumb_q = _queue_mod.PriorityQueue()
+    _comic_thumb_ready = _queue_mod.Queue()
+    _comic_thumb_pending = set()
+    _comic_thumb_pending_lock = threading.Lock()
+    _comic_seq = 0
+    _comic_seq_lock = threading.Lock()
+    comic_workers_running = [True]
+
+    def _comic_thumb_worker():
+        while comic_workers_running[0]:
+            try:
+                item = _comic_thumb_q.get(timeout=0.5)
+            except Exception:
+                continue
+            if item is None:
+                _comic_thumb_q.task_done()
+                break
+            try:
+                prio, seq, fp, p_idx, p_name = item
+
+                disk = _comic_thumb_disk_path(fp, p_idx)
+                surf = None
+                dw, dh = 0, 0
+
+                # 1. Check disk cache first (1-2ms)
+                if os.path.exists(disk):
+                    try:
+                        surf = sdlimage.IMG_Load(disk.encode("utf-8"))
+                        if surf:
+                            dw = surf.contents.w
+                            dh = surf.contents.h
+                            if dw <= 0 or dh <= 0:
+                                sdl2.SDL_FreeSurface(surf)
+                                surf = None
+                    except Exception:
+                        surf = None
+
+                # 2. If not on disk, decode and render thumbnail
+                if not surf and p_name:
+                    try:
+                        img_data = ComicArchive.read_image_data(fp, p_name, is_thumb=True)
+                        if img_data:
+                            rw = sdl2.SDL_RWFromConstMem(img_data, len(img_data))
+                            orig_surf = sdlimage.IMG_Load_RW(rw, 1)
+                            if orig_surf:
+                                ow = orig_surf.contents.w
+                                oh = orig_surf.contents.h
+                                scale = min(264.0 / max(1, ow), 372.0 / max(1, oh))
+                                if scale < 1.0:
+                                    tw = max(1, int(ow * scale))
+                                    th = max(1, int(oh * scale))
+                                    small_surf = sdl2.SDL_CreateRGBSurfaceWithFormat(0, tw, th, 32, sdl2.SDL_PIXELFORMAT_RGBA8888)
+                                    if small_surf:
+                                        sdl2.SDL_BlitScaled(orig_surf, None, small_surf, None)
+                                        surf = small_surf
+                                        dw, dh = tw, th
+                                    else:
+                                        surf = orig_surf
+                                        dw, dh = ow, oh
+                                    if small_surf:
+                                        sdl2.SDL_FreeSurface(orig_surf)
+                                else:
+                                    surf = orig_surf
+                                    dw, dh = ow, oh
+
+                                if surf and not os.path.exists(disk):
+                                    try:
+                                        sdl2.SDL_SaveBMP(surf, disk.encode("utf-8"))
+                                    except Exception:
+                                        pass
+                    except Exception as e:
+                        log_debug(f"comic_thumb worker error: {e}")
+
+                with _comic_thumb_pending_lock:
+                    _comic_thumb_pending.discard((fp, p_idx))
+
+                if surf and dw > 0 and dh > 0:
+                    _comic_thumb_ready.put((fp, p_idx, surf, dw, dh))
+            except Exception as e:
+                log_debug(f"worker exception: {e}")
+            finally:
+                _comic_thumb_q.task_done()
+
+    _comic_thumb_threads = []
+    for _i in range(2):
+        _t = threading.Thread(target=_comic_thumb_worker, daemon=True)
+        _t.start()
+        _comic_thumb_threads.append(_t)
+
+    def cancel_pending_comic_thumbs():
+        with _comic_thumb_pending_lock:
+            _comic_thumb_pending.clear()
+        while not _comic_thumb_q.empty():
+            try:
+                _comic_thumb_q.get_nowait()
+                _comic_thumb_q.task_done()
+            except Exception:
+                break
+
+    def queue_comic_thumbnail(fp, p_idx, priority=0):
+        nonlocal _comic_seq
+        if not book_pages or p_idx < 0 or p_idx >= len(book_pages):
+            return
+        cache_key = (fp, p_idx)
+        if cache_key in comic_thumb_cache:
+            return
+        with _comic_thumb_pending_lock:
+            if cache_key in _comic_thumb_pending:
+                return
+            _comic_thumb_pending.add(cache_key)
+        with _comic_seq_lock:
+            _comic_seq += 1
+            seq = _comic_seq
+        p_name = book_pages[p_idx]
+        _comic_thumb_q.put((priority, seq, fp, p_idx, p_name))
+
+    def pump_comic_thumb_ready():
+        nonlocal comic_thumb_cache, needs_redraw
+        cur_t = sdl2.SDL_GetTicks()
+        promoted = 0
+        while not _comic_thumb_ready.empty():
+            try:
+                fp, p_idx, surf, dw, dh = _comic_thumb_ready.get_nowait()
+            except Exception:
+                break
+            try:
+                cache_key = (fp, p_idx)
+                tex = sdl2.SDL_CreateTextureFromSurface(renderer.sdlrenderer, surf)
+                sdl2.SDL_FreeSurface(surf)
+                if tex:
+                    if len(comic_thumb_cache) >= 80:
+                        current_screen_start = (page_select_temp // 10) * 10
+                        keep_range = set(range(max(0, current_screen_start - 10), min(len(book_pages), current_screen_start + 50)))
+                        candidates = [k for k in comic_thumb_cache.keys() if k[1] not in keep_range]
+                        if not candidates:
+                            candidates = list(comic_thumb_cache.keys())
+                        if candidates:
+                            oldest_key = min(candidates, key=lambda k: comic_thumb_cache[k].get("last_used", 0))
+                            try:
+                                sdl2.SDL_DestroyTexture(comic_thumb_cache[oldest_key]["tex"])
+                            except Exception:
+                                pass
+                            del comic_thumb_cache[oldest_key]
+
+                    comic_thumb_cache[cache_key] = {"tex": tex, "w": dw, "h": dh, "last_used": cur_t}
+                    needs_redraw = True
+                    promoted += 1
+            except Exception as e:
+                pass
+        return promoted
+
+    def clear_comic_thumb_cache():
+        nonlocal comic_thumb_cache
+        cancel_pending_comic_thumbs()
+        for k in list(comic_thumb_cache.keys()):
+            try:
+                sdl2.SDL_DestroyTexture(comic_thumb_cache[k]["tex"])
+            except Exception:
+                pass
+        comic_thumb_cache.clear()
+
+    def get_comic_thumbnail(filepath, page_idx):
+        nonlocal comic_thumb_cache
+        if not book_pages or page_idx < 0 or page_idx >= len(book_pages):
+            return None
+        cache_key = (filepath, page_idx)
+        if cache_key in comic_thumb_cache:
+            comic_thumb_cache[cache_key]["last_used"] = sdl2.SDL_GetTicks()
+            return comic_thumb_cache[cache_key]
+        queue_comic_thumbnail(filepath, page_idx, priority=0)
+        return None
+
     def load_book(filepath):
         nonlocal book_pages, current_page_idx, pan_x, pan_y, zoom_level, current_font_size, current_filepath, loaded_page_idx, loaded_texture
         book_pages = []
         loaded_page_idx = -1
+        clear_comic_thumb_cache()
         if loaded_texture:
             sdl2.SDL_DestroyTexture(loaded_texture)
             loaded_texture = None
@@ -754,6 +1117,10 @@ def main():
     running = True
     needs_redraw = True
     last_axis_scroll = 0
+    last_right_axis_time = 0
+    right_axis_held = False
+    last_left_axis_time = 0
+    left_axis_held = False
     show_hud = True
     
     while running:
@@ -781,15 +1148,89 @@ def main():
                 axis_left = True
             elif ax > 15000:
                 axis_right = True
+
+            # Right Stick dedicated controls for Comic Reader & Page Select
+            if abs(rx) < 10000 and abs(ry) < 10000:
+                right_axis_held = False
+            elif state in (STATE_READER, STATE_PAGE_SELECT):
+                if not right_axis_held or (current_ticks - last_right_axis_time > 220):
+                    if abs(rx) >= 15000 and abs(rx) > abs(ry):
+                        if state == STATE_READER:
+                            if rx > 0: # Right -> Next Page (like R1)
+                                if book_pages and current_page_idx < len(book_pages) - 1:
+                                    current_page_idx += 1
+                                    zoom_level = -1.0
+                                    pan_x = 0
+                                    pan_y = 0
+                                    needs_redraw = True
+                            else: # Left -> Prev Page (like L1)
+                                if current_page_idx > 0:
+                                    current_page_idx -= 1
+                                    zoom_level = -1.0
+                                    pan_x = 0
+                                    pan_y = 0
+                                    needs_redraw = True
+                        elif state == STATE_PAGE_SELECT:
+                            total_p = len(book_pages) if book_pages else 1
+                            if rx > 0: # Right -> +1
+                                page_select_temp = min(total_p - 1, page_select_temp + 1)
+                                needs_redraw = True
+                            else: # Left -> -1
+                                page_select_temp = max(0, page_select_temp - 1)
+                                needs_redraw = True
+                        right_axis_held = True
+                        last_right_axis_time = current_ticks
+                    elif abs(ry) >= 15000 and abs(ry) >= abs(rx):
+                        if state == STATE_READER:
+                            state = STATE_PAGE_SELECT
+                            page_select_temp = current_page_idx
+                            needs_redraw = True
+                        elif state == STATE_PAGE_SELECT:
+                            total_p = len(book_pages) if book_pages else 1
+                            if ry < 0: # Up -> Row Up (-5)
+                                page_select_temp = max(0, page_select_temp - 5)
+                                needs_redraw = True
+                            else: # Down -> Row Down (+5)
+                                page_select_temp = min(total_p - 1, page_select_temp + 5)
+                                needs_redraw = True
+                        right_axis_held = True
+                        last_right_axis_time = current_ticks
+
+            # Left Stick controls pan in Comic Reader, or adjust page in Page Select
+            if abs(lx) < 10000 and abs(ly) < 10000:
+                left_axis_held = False
             if state == STATE_READER and (current_ticks - last_axis_scroll > 100):
-                if abs(ax) >= 15000 or abs(ay) >= 15000:
-                    if abs(ax) > abs(ay):
-                        handle_reader_direction(1 if ax > 0 else -1, 0)
+                if abs(lx) >= 15000 or abs(ly) >= 15000:
+                    if abs(lx) > abs(ly):
+                        handle_reader_direction(1 if lx > 0 else -1, 0)
                     else:
-                        handle_reader_direction(0, 1 if ay > 0 else -1)
+                        handle_reader_direction(0, 1 if ly > 0 else -1)
                     last_axis_scroll = current_ticks
                     needs_redraw = True
                     break
+            elif state == STATE_PAGE_SELECT:
+                total_p = len(book_pages) if book_pages else 1
+                if not left_axis_held or (current_ticks - last_left_axis_time > 220):
+                    if abs(ly) >= 15000 and abs(ly) >= abs(lx):
+                        if ly < 0: # Up -> Row Up (-5)
+                            page_select_temp = max(0, page_select_temp - 5)
+                            needs_redraw = True
+                        else: # Down -> Row Down (+5)
+                            page_select_temp = min(total_p - 1, page_select_temp + 5)
+                            needs_redraw = True
+                        left_axis_held = True
+                        last_left_axis_time = current_ticks
+                        break
+                    elif abs(lx) >= 15000 and abs(lx) > abs(ly):
+                        if lx > 0: # Right -> +1
+                            page_select_temp = min(total_p - 1, page_select_temp + 1)
+                            needs_redraw = True
+                        else: # Left -> -1
+                            page_select_temp = max(0, page_select_temp - 1)
+                            needs_redraw = True
+                        left_axis_held = True
+                        last_left_axis_time = current_ticks
+                        break
                     
         for event in events:
             if event.type == sdl2.SDL_CONTROLLERAXISMOTION:
@@ -800,6 +1241,7 @@ def main():
                             l2_pressed = True
                             state = STATE_PAGE_SELECT
                             page_select_temp = current_page_idx
+                            needs_redraw = True
                         elif val < 8000:
                             l2_pressed = False
                     elif event.caxis.axis == sdl2.SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
@@ -808,6 +1250,7 @@ def main():
                             r2_pressed = True
                             state = STATE_PAGE_SELECT
                             page_select_temp = current_page_idx
+                            needs_redraw = True
                         elif val < 8000:
                             r2_pressed = False
             if event.type == sdl2.SDL_QUIT:
@@ -860,23 +1303,11 @@ def main():
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
                         dpad_right_held = True
                         dpad_horiz_timer = 0
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_LEFTSHOULDER: # Page Up
-                        page_jump = 8
-                        sel_index = max(0, sel_index - page_jump)
-                        if library_view_mode == "grid":
-                            scroll_y = (sel_index // 8) * 8
-                        else:
-                            scroll_y = max(0, scroll_y - page_jump)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_LEFTSHOULDER: # L: Prev Theme
+                        theme_idx = (theme_idx - 1) % len(THEMES)
+                        write_theme_idx(theme_idx)
                         needs_redraw = True
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: # Page Down
-                        page_jump = 8
-                        sel_index = min(len(list_items) - 1, sel_index + page_jump)
-                        if library_view_mode == "grid":
-                            scroll_y = (sel_index // 8) * 8
-                        else:
-                            scroll_y = min(max(0, len(list_items) - page_jump), scroll_y + page_jump)
-                        needs_redraw = True
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y - Theme Toggle
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: # R: Next Theme
                         theme_idx = (theme_idx + 1) % len(THEMES)
                         write_theme_idx(theme_idx)
                         needs_redraw = True
@@ -889,6 +1320,8 @@ def main():
                                 folders, files = get_directory_contents(current_path)
                                 sel_index = 0
                                 scroll_y = 0
+                                _li_pw = ([{"name":"..","is_dir":True}] if current_path != base_path else []) + [{"name":f,"is_dir":True} for f in folders] + [{"name":f,"is_dir":False} for f in files]
+                                prewarm_covers(_li_pw, current_path)
                                 needs_redraw = True
                             elif item["is_dir"]:
                                 clear_cover_cache()
@@ -896,6 +1329,8 @@ def main():
                                 folders, files = get_directory_contents(current_path)
                                 sel_index = 0
                                 scroll_y = 0
+                                _li_pw = ([{"name":"..","is_dir":True}] if current_path != base_path else []) + [{"name":f,"is_dir":True} for f in folders] + [{"name":f,"is_dir":False} for f in files]
+                                prewarm_covers(_li_pw, current_path)
                                 needs_redraw = True
                             else:
                                 filepath = os.path.join(current_path, item["name"])
@@ -913,7 +1348,15 @@ def main():
                             elif sel_index < scroll_y:
                                 scroll_y = sel_index
                         needs_redraw = True
-                        
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # SELECT - Author Info
+                        state = STATE_ABOUT
+                        needs_redraw = True
+
+                elif state == STATE_ABOUT:
+                    if btn in (sdl2.SDL_CONTROLLER_BUTTON_A, sdl2.SDL_CONTROLLER_BUTTON_B, sdl2.SDL_CONTROLLER_BUTTON_BACK):
+                        state = STATE_BROWSE
+                        needs_redraw = True
+
                 elif state == STATE_READER:
                     if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP:
                         handle_reader_direction(0, -1)
@@ -944,9 +1387,13 @@ def main():
                         vw, vh = get_reader_view_size()
                         if img_w > 0 and img_h > 0:
                             min_zoom = min(vw / float(img_w), vh / float(img_h))
-                            if zoom_level <= 0:
-                                zoom_level = vw / float(img_w)
-                            zoom_level = max(zoom_level / 1.2, min_zoom)
+                            fit_w = vw / float(img_w)
+                            target_min = min(fit_w, min_zoom)
+                            if zoom_level > target_min + 0.05:
+                                zoom_level = max(zoom_level / 1.2, target_min)
+                                pan_x = 0
+                                pan_y = 0
+                                needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_Y: # Physical X: Rotate
                         reader_rotation_idx = (reader_rotation_idx + 1) % 4
                         write_reader_rotation_idx(reader_rotation_idx)
@@ -960,22 +1407,40 @@ def main():
                         show_hud = not show_hud
                         
                 elif state == STATE_PAGE_SELECT:
-                    if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP or btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-                        page_select_temp = min(len(book_pages) - 1, page_select_temp + 1)
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN or btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-                        page_select_temp = max(0, page_select_temp - 1)
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
-                        page_select_temp = max(0, page_select_temp - 10)
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-                        page_select_temp = min(len(book_pages) - 1, page_select_temp + 10)
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A: Confirm
+                    total_p = len(book_pages) if book_pages else 1
+                    if btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A: Confirm
                         current_page_idx = page_select_temp
                         zoom_level = -1.0
                         pan_x = 0
                         pan_y = 0
                         state = STATE_READER
+                        cancel_pending_comic_thumbs()
+                        needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B: Cancel
                         state = STATE_READER
+                        cancel_pending_comic_thumbs()
+                        needs_redraw = True
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # SELECT: Return to Library
+                        write_save(current_filepath, current_page_idx, current_font_size)
+                        ComicArchive.close_active()
+                        clear_comic_thumb_cache()
+                        state = STATE_BROWSE
+                        needs_redraw = True
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                        page_select_temp = max(0, page_select_temp - 1)
+                        needs_redraw = True
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                        page_select_temp = min(total_p - 1, page_select_temp + 1)
+                        needs_redraw = True
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP:
+                        page_select_temp = max(0, page_select_temp - 5)
+                        needs_redraw = True
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                        page_select_temp = min(total_p - 1, page_select_temp + 5)
+                        needs_redraw = True
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y: Snap to Current Reading Page
+                        page_select_temp = current_page_idx
+                        needs_redraw = True
                         
                 elif state == STATE_TOC:
                     if btn == sdl2.SDL_CONTROLLER_BUTTON_DPAD_UP:
@@ -992,10 +1457,16 @@ def main():
                         state = STATE_READER
 
         # Key repeat logic for library (exact Files app behavior)
-        is_up = dpad_up_held or axis_up
-        is_down = dpad_down_held or axis_down
-        is_left = dpad_left_held or axis_left
-        is_right = dpad_right_held or axis_right
+        if state == STATE_BROWSE:
+            is_up = dpad_up_held or axis_up
+            is_down = dpad_down_held or axis_down
+            is_left = dpad_left_held or axis_left
+            is_right = dpad_right_held or axis_right
+        else:
+            is_up = dpad_up_held
+            is_down = dpad_down_held
+            is_left = dpad_left_held
+            is_right = dpad_right_held
         
         if state == STATE_BROWSE:
             list_items = [{"name": "..", "is_dir": True}] if current_path != base_path else []
@@ -1107,18 +1578,31 @@ def main():
             else:
                 dpad_timer = 0
         elif state == STATE_PAGE_SELECT:
-            if is_up or is_right:
+            total_p = len(book_pages) if book_pages else 1
+            if is_up:
                 if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
-                    page_select_temp = min(len(book_pages) - 1, page_select_temp + 1)
+                    page_select_temp = max(0, page_select_temp - 5)
                     needs_redraw = True
                 dpad_timer += 1
-            elif is_down or is_left:
+            elif is_down:
                 if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
-                    page_select_temp = max(0, page_select_temp - 1)
+                    page_select_temp = min(total_p - 1, page_select_temp + 5)
                     needs_redraw = True
                 dpad_timer += 1
             else:
                 dpad_timer = 0
+            if is_left:
+                if dpad_horiz_timer == 0 or (dpad_horiz_timer > 15 and dpad_horiz_timer % 3 == 0):
+                    page_select_temp = max(0, page_select_temp - 1)
+                    needs_redraw = True
+                dpad_horiz_timer += 1
+            elif is_right:
+                if dpad_horiz_timer == 0 or (dpad_horiz_timer > 15 and dpad_horiz_timer % 3 == 0):
+                    page_select_temp = min(total_p - 1, page_select_temp + 1)
+                    needs_redraw = True
+                dpad_horiz_timer += 1
+            else:
+                dpad_horiz_timer = 0
         elif state != STATE_READER:
             dpad_up_held = False
             dpad_down_held = False
@@ -1127,11 +1611,16 @@ def main():
             dpad_timer = 0
             dpad_horiz_timer = 0
 
+        pump_cover_ready()  # promote background-loaded covers to GPU textures
+        pump_comic_thumb_ready()  # promote background-loaded thumbnails to GPU textures
         if needs_redraw:
             theme = THEMES[theme_idx]
             renderer.clear(theme["bg"])
             
-            render_state = state_before_quit if state == STATE_QUIT_CONFIRM else state
+            if state in (STATE_QUIT_CONFIRM, STATE_ABOUT):
+                render_state = state_before_quit if state == STATE_QUIT_CONFIRM else STATE_BROWSE
+            else:
+                render_state = state
 
             if render_state == STATE_BROWSE:
                 library_theme = LIBRARY_THEMES[theme_idx]
@@ -1340,7 +1829,7 @@ def main():
                                 sdl2.SDL_DestroyTexture(tex)
 
                 renderer.fill((0, SCREEN_H - 58, SCREEN_W, 1), library_theme["divider"])
-                footer = f"A: Open    B: {'List View' if library_view_mode == 'grid' else 'Grid View'}    Y: Theme    [START] Exit"
+                footer = f"A: Open   B: {'List' if library_view_mode == 'grid' else 'Grid'}   L/R: Theme   SELECT: Info   [START] Exit"
                 tex, tw, th = render_text(footer, font_small, library_theme["secondary"])
                 if tex:
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(32, SCREEN_H - 38, tw, th))
@@ -1373,6 +1862,8 @@ def main():
                         except Exception:
                             pass
                         loaded_page_idx = current_page_idx
+                        pan_x = 0
+                        pan_y = 0
                 
                 if loaded_texture:
                     if zoom_level <= 0:
@@ -1399,7 +1890,7 @@ def main():
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, loaded_texture, None, dst_rect)
                 
                 if show_hud:
-                    # Top HUD: Tên file đầy đủ - Page
+                    # Top HUD: Full filename - Page
                     book_title, _ = get_book_display_metadata(os.path.basename(current_filepath))
                     total_pages = len(book_pages)
                     hud_top = f"{book_title} - Page {current_page_idx + 1}/{total_pages}"
@@ -1409,7 +1900,7 @@ def main():
                         sdl2.SDL_DestroyTexture(tex)
                     
                     # Bottom HUD
-                    footer = f"L2/R2: Page Jump | L/R: Turn | Y: Zoom In | B: Zoom Out | X: Rotate | A: HUD | [SELECT] Exit"
+                    footer = f"L2/R2: Jump | L/R: Turn | Y: Zoom In | B: Zoom Out | X: Rotate | A: HUD | SELECT: LIB"
                     tex, tw, th = render_text(footer, font_small, theme["text"])
                     if tex:
                         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, reader_h - 45, min(tw, reader_w-40), th))
@@ -1432,42 +1923,115 @@ def main():
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, target, None, None)
                     
             elif render_state == STATE_PAGE_SELECT:
-                # First draw the reader state behind it (slightly dimmed or just as is)
-                # But since we are in a single frame, we don't have the last frame. 
-                # Let's just draw a simple overlay.
-                # Actually, STATE_PAGE_SELECT is a separate state. We should redraw the reader background first.
-                # To keep it simple, just clear screen and draw big popup.
-                renderer.clear(theme["bg"])
+                lib_t = LIBRARY_THEMES[theme_idx]
+                renderer.fill((0, 0, SCREEN_W, SCREEN_H), lib_t["bg"])
                 
-                # Draw Box
-                box_w = 400
-                box_h = 200
-                box_x = (SCREEN_W - box_w) // 2
-                box_y = (SCREEN_H - box_h) // 2
-                renderer.fill((box_x, box_y, box_w, box_h), theme["text"])
-                renderer.fill((box_x+2, box_y+2, box_w-4, box_h-4), theme["bg"])
+                # Top Header Bar
+                renderer.fill((0, 0, SCREEN_W, 60), lib_t["header"])
+                renderer.fill((0, 59, SCREEN_W, 1), lib_t["divider"])
                 
-                title_str = "JUMP TO PAGE"
-                tex, tw, th = render_text(title_str, font_medium, theme["text"])
-                if tex:
-                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(box_x + (box_w - tw)//2, box_y + 30, tw, th))
-                    sdl2.SDL_DestroyTexture(tex)
+                tex_title, tw, th = render_text("CONTENTS", font_medium, lib_t["accent"])
+                if tex_title:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_title, None, sdl2.SDL_Rect(32, (60 - th) // 2, tw, th))
+                    sdl2.SDL_DestroyTexture(tex_title)
                     
-                page_str = f"{page_select_temp + 1} / {len(book_pages)}"
-                tex, tw, th = render_text(page_str, font_large, theme["text"])
-                if tex:
-                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(box_x + (box_w - tw)//2, box_y + 80, tw, th))
-                    sdl2.SDL_DestroyTexture(tex)
+                total_p = len(book_pages) if book_pages else 1
+                curr_info = f"Page {page_select_temp + 1} / {total_p}"
+                tex_info, iw, ih = render_text(curr_info, font_small, lib_t["secondary"])
+                if tex_info:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_info, None, sdl2.SDL_Rect(SCREEN_W - iw - 32, (60 - ih) // 2, iw, ih))
+                    sdl2.SDL_DestroyTexture(tex_info)
                     
-                hint_str = "A: Jump | B: Cancel"
-                tex, tw, th = render_text(hint_str, font_small, theme["text"])
-                if tex:
-                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(box_x + (box_w - tw)//2, box_y + 150, tw, th))
-                    sdl2.SDL_DestroyTexture(tex)
+                # 2 Rows x 5 Columns Grid (10 Pages per screen)
+                start_page = (page_select_temp // 10) * 10
+                end_page = min(total_p, start_page + 10)
+                
+                thumb_w = 176
+                thumb_h = 248
+                col_gap = 20
+                margin_x = 32
+                
+                for p_idx in range(start_page, end_page):
+                    rel_idx = p_idx - start_page
+                    col = rel_idx % 5
+                    row = rel_idx // 5
+                    
+                    cell_x = margin_x + col * (thumb_w + col_gap)
+                    cell_y = 78 if row == 0 else 380
+                    
+                    is_sel = (p_idx == page_select_temp)
+                    is_reading = (p_idx == current_page_idx)
+                    
+                    # Background card
+                    renderer.fill((cell_x, cell_y, thumb_w, thumb_h), lib_t["header"])
+                    
+                    # Thumbnail Image (Aspect-Ratio Fitted)
+                    thumb_info = get_comic_thumbnail(current_filepath, p_idx)
+                    if thumb_info:
+                        tex_thumb = thumb_info["tex"]
+                        img_w_t, img_h_t = thumb_info["w"], thumb_info["h"]
+                        scale = min(float(thumb_w) / max(1, img_w_t), float(thumb_h) / max(1, img_h_t))
+                        dw = max(1, int(img_w_t * scale))
+                        dh = max(1, int(img_h_t * scale))
+                        dx = cell_x + (thumb_w - dw) // 2
+                        dy = cell_y + (thumb_h - dh) // 2
+                        sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_thumb, None, sdl2.SDL_Rect(dx, dy, dw, dh))
+                    else:
+                        tex_ph, pw, ph = render_text(f"P. {p_idx + 1}", font_small, lib_t["secondary"])
+                        if tex_ph:
+                            sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_ph, None, sdl2.SDL_Rect(cell_x + (thumb_w - pw)//2, cell_y + (thumb_h - ph)//2, pw, ph))
+                            sdl2.SDL_DestroyTexture(tex_ph)
+                            
+                    # Selection highlight border (3px thick)
+                    if is_sel:
+                        renderer.fill((cell_x - 3, cell_y - 3, thumb_w + 6, 3), lib_t["accent"])
+                        renderer.fill((cell_x - 3, cell_y + thumb_h, thumb_w + 6, 3), lib_t["accent"])
+                        renderer.fill((cell_x - 3, cell_y, 3, thumb_h), lib_t["accent"])
+                        renderer.fill((cell_x + thumb_w, cell_y, 3, thumb_h), lib_t["accent"])
+                    else:
+                        renderer.fill((cell_x - 1, cell_y - 1, thumb_w + 2, 1), lib_t["divider"])
+                        renderer.fill((cell_x - 1, cell_y + thumb_h, thumb_w + 2, 1), lib_t["divider"])
+                        renderer.fill((cell_x - 1, cell_y, 1, thumb_h), lib_t["divider"])
+                        renderer.fill((cell_x + thumb_w, cell_y, 1, thumb_h), lib_t["divider"])
+
+                    # Reading Badge
+                    if is_reading:
+                        badge_w, badge_h = 48, 20
+                        renderer.fill((cell_x + 6, cell_y + 6, badge_w, badge_h), lib_t["sel_bg"])
+                        renderer.fill((cell_x + 6, cell_y + 6, badge_w, 1), lib_t["accent"])
+                        tex_rd, rw_w, rh_w = render_text("READ", font_small, lib_t["accent"])
+                        if tex_rd:
+                            sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_rd, None, sdl2.SDL_Rect(cell_x + 6 + (badge_w - rw_w)//2, cell_y + 6 + (badge_h - rh_w)//2, rw_w, rh_w))
+                            sdl2.SDL_DestroyTexture(tex_rd)
+
+                    # Label below thumbnail
+                    lbl_color = lib_t["accent"] if is_sel else lib_t["text"]
+                    tex_lbl, lw, lh = render_text(f"Page {p_idx + 1}", font_small, lbl_color)
+                    if tex_lbl:
+                        sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_lbl, None, sdl2.SDL_Rect(cell_x + (thumb_w - lw)//2, cell_y + thumb_h + 6, lw, lh))
+                        sdl2.SDL_DestroyTexture(tex_lbl)
+
+                # Bottom Footer Bar
+                renderer.fill((0, SCREEN_H - 50, SCREEN_W, 50), lib_t["header"])
+                renderer.fill((0, SCREEN_H - 50, SCREEN_W, 1), lib_t["divider"])
+                
+                footer_hint = "D-Pad / Sticks: Move   |   Y: Current Page   |   A: Jump to Page   |   B: Cancel"
+                tex_foot, fw, fh = render_text(footer_hint, font_small, lib_t["secondary"])
+                if tex_foot:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_foot, None, sdl2.SDL_Rect((SCREEN_W - fw)//2, SCREEN_H - 50 + (50 - fh)//2, fw, fh))
+                    sdl2.SDL_DestroyTexture(tex_foot)
+
+                # Preload 40 pages ahead and 10 pages behind (non-blocking)
+                for p in range(end_page, min(total_p, end_page + 40)):
+                    if (current_filepath, p) not in comic_thumb_cache:
+                        queue_comic_thumbnail(current_filepath, p, priority=1)
+                for p in range(max(0, start_page - 10), start_page):
+                    if (current_filepath, p) not in comic_thumb_cache:
+                        queue_comic_thumbnail(current_filepath, p, priority=1)
                     
             elif render_state == STATE_TOC:
                 renderer.fill((0, 0, SCREEN_W, 60), theme["header"])
-                tex, tw, th = render_text("TABLE OF CONTENTS", font_medium, theme["text"])
+                tex, tw, th = render_text("CONTENTS", font_medium, theme["text"])
                 if tex:
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(SCREEN_W//2 - tw//2, 10, tw, th))
                     sdl2.SDL_DestroyTexture(tex)
@@ -1494,7 +2058,58 @@ def main():
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, SCREEN_H - 40, tw, th))
                     sdl2.SDL_DestroyTexture(tex)
 
-            if state == STATE_QUIT_CONFIRM:
+            if state == STATE_ABOUT:
+                lib_t = LIBRARY_THEMES[theme_idx]
+                sdl2.SDL_SetRenderDrawBlendMode(renderer.sdlrenderer, sdl2.SDL_BLENDMODE_BLEND)
+                sdl2.SDL_SetRenderDrawColor(renderer.sdlrenderer, 0, 0, 0, 160)
+                sdl2.SDL_RenderFillRect(renderer.sdlrenderer, sdl2.SDL_Rect(0, 0, SCREEN_W, SCREEN_H))
+                
+                pop_w, pop_h = 640, 400
+                pop_x, pop_y = (SCREEN_W - pop_w) // 2, (SCREEN_H - pop_h) // 2
+                renderer.fill((pop_x, pop_y, pop_w, pop_h), lib_t["sel_border"])
+                renderer.fill((pop_x + 2, pop_y + 2, pop_w - 4, pop_h - 4), lib_t["bg"])
+                
+                # Title
+                tex, tw, th = render_text("APPLICATION INFO", font_medium, lib_t["accent"])
+                if tex:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(pop_x + (pop_w - tw)//2, pop_y + 24, tw, th))
+                    sdl2.SDL_DestroyTexture(tex)
+                    
+                # App Name
+                tex, tw, th = render_text("RetroComics v1.0", font_large, lib_t["text"])
+                if tex:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(pop_x + (pop_w - tw)//2, pop_y + 68, tw, th))
+                    sdl2.SDL_DestroyTexture(tex)
+                    
+                # Subtitle
+                tex, tw, th = render_text("Comic & Manga Reader for TrimUI Brick Pro", font_small, lib_t["secondary"])
+                if tex:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(pop_x + (pop_w - tw)//2, pop_y + 128, tw, th))
+                    sdl2.SDL_DestroyTexture(tex)
+                    
+                renderer.fill((pop_x + 40, pop_y + 166, pop_w - 80, 1), lib_t["divider"])
+                
+                # Info lines
+                lines = [
+                    "Author: Nguyen Ngoc Cuong",
+                    "Email: nn.cuong.404@gmail.com",
+                    "Facebook: aegony98 / Instagram: ich_heisse_cuong"
+                ]
+                iy = pop_y + 200
+                for line in lines:
+                    tex, tw, th = render_text(line, font_small, lib_t["text"])
+                    if tex:
+                        sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(pop_x + 35, iy, min(tw, pop_w - 70), th))
+                        sdl2.SDL_DestroyTexture(tex)
+                    iy += 40
+                    
+                renderer.fill((pop_x + 40, pop_y + pop_h - 55, pop_w - 80, 1), lib_t["divider"])
+                tex, tw, th = render_text("B / SELECT: Close", font_small, lib_t["secondary"])
+                if tex:
+                    sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(pop_x + (pop_w - tw)//2, pop_y + pop_h - 40, tw, th))
+                    sdl2.SDL_DestroyTexture(tex)
+
+            elif state == STATE_QUIT_CONFIRM:
                 sdl2.SDL_SetRenderDrawBlendMode(renderer.sdlrenderer, sdl2.SDL_BLENDMODE_BLEND)
                 sdl2.SDL_SetRenderDrawColor(renderer.sdlrenderer, 0, 0, 0, 150)
                 sdl2.SDL_RenderFillRect(renderer.sdlrenderer, sdl2.SDL_Rect(0, 0, SCREEN_W, SCREEN_H))
@@ -1526,6 +2141,11 @@ def main():
             
         sdl2.SDL_Delay(16)
 
+    cover_thread_running[0] = False
+    comic_workers_running[0] = False
+    for _t in _cover_threads: _t.join(timeout=0.3)
+    for _t in _comic_thumb_threads: _t.join(timeout=0.3)
+    clear_comic_thumb_cache()
     clear_cover_cache()
     if font_medium:
         sdlttf.TTF_CloseFont(font_medium)

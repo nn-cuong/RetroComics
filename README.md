@@ -1,6 +1,6 @@
 # RetroComics App
 
-Một ứng dụng đọc truyện tranh, Manga, Comics và tài liệu PDF mã nguồn mở, được thiết kế và tối ưu hóa đặc biệt cho thiết bị **TrimUI Brick Pro** (màn hình IPS 1024×768, vi xử lý Allwinner A133p, TrimUI OS). Ứng dụng là phiên bản chuyên biệt của hệ sinh thái đọc sách song hành cùng RetroRead.
+Một ứng dụng đọc truyện tranh, Manga, Comics và tài liệu PDF mã nguồn mở, được thiết kế và tối ưu hóa đặc biệt cho thiết bị **TrimUI Brick Pro** (màn hình IPS 1024×768, vi xử lý Allwinner A133p, TrimUI OS). Ứng dụng là phiên bản chuyên biệt của hệ sinh thái đọc sách song hành cùng RetroBooks.
 
 ---
 
