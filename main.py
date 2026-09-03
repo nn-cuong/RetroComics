@@ -104,10 +104,10 @@ LIBRARY_THEMES = [
         "text": sdl2.SDL_Color(235, 213, 171, 255),# #EBD5AB
         "secondary": sdl2.SDL_Color(184, 159, 118, 255),# #B89F76
         "accent": sdl2.ext.Color(210, 149, 93),    # #D2955D
-        "sel_border": sdl2.ext.Color(168, 120, 40),# #A87828
-        "sel_bg": sdl2.ext.Color(238, 224, 185),   # #EEE0B9
-        "sel_text": sdl2.SDL_Color(55, 42, 25, 255),# #372A19
-        "sel_sec": sdl2.SDL_Color(110, 85, 55, 255),# #6E5537
+        "sel_border": sdl2.ext.Color(210, 149, 93),# #D2955D
+        "sel_bg": sdl2.ext.Color(64, 48, 33),      # #403021
+        "sel_text": sdl2.SDL_Color(245, 225, 190, 255),# #F5E1BE
+        "sel_sec": sdl2.SDL_Color(195, 175, 140, 255), # #C3AF8C
     },
     {
         "bg": sdl2.ext.Color(20, 20, 20),          # #141414
@@ -117,9 +117,9 @@ LIBRARY_THEMES = [
         "secondary": sdl2.SDL_Color(154, 154, 154, 255),# #9A9A9A
         "accent": sdl2.ext.Color(164, 177, 194),   # #A4B1C2
         "sel_border": sdl2.ext.Color(102, 137, 181),# #6689B5
-        "sel_bg": sdl2.ext.Color(229, 235, 241),   # #E5EBF1
-        "sel_text": sdl2.SDL_Color(30, 30, 30, 255),# #1E1E1E
-        "sel_sec": sdl2.SDL_Color(80, 80, 80, 255),# #505050
+        "sel_bg": sdl2.ext.Color(38, 42, 48),      # #262A30
+        "sel_text": sdl2.SDL_Color(240, 240, 240, 255),# #F0F0F0
+        "sel_sec": sdl2.SDL_Color(180, 180, 180, 255), # #B4B4B4
     },
     {
         "bg": sdl2.ext.Color(244, 236, 216),       # #F4ECD8
@@ -128,10 +128,10 @@ LIBRARY_THEMES = [
         "text": sdl2.SDL_Color(59, 52, 40, 255),   # #3B3428
         "secondary": sdl2.SDL_Color(118, 107, 90, 255),# #766B5A
         "accent": sdl2.ext.Color(107, 91, 149),    # #6B5B95
-        "sel_border": sdl2.ext.Color(102, 137, 181),# #6689B5
-        "sel_bg": sdl2.ext.Color(229, 235, 241),   # #E5EBF1
-        "sel_text": sdl2.SDL_Color(30, 30, 30, 255),# #1E1E1E
-        "sel_sec": sdl2.SDL_Color(80, 80, 80, 255),# #505050
+        "sel_border": sdl2.ext.Color(168, 120, 40),# #A87828
+        "sel_bg": sdl2.ext.Color(252, 247, 235),   # #FCF7EB
+        "sel_text": sdl2.SDL_Color(30, 26, 18, 255),# #1E1A12
+        "sel_sec": sdl2.SDL_Color(95, 85, 70, 255),# #5F5546
     },
     {
         "bg": sdl2.ext.Color(243, 231, 199),       # #F3E7C7
@@ -249,10 +249,7 @@ def get_directory_contents(path):
 def get_book_display_metadata(filename):
     """Derive library label from a filename without changing the real path."""
     stem = os.path.splitext(filename)[0]
-    title, separator, _ = stem.rpartition(" - ")
-    if not separator:
-        return stem.strip(), ""
-    return title.strip(), ""
+    return stem.strip(), ""
 
 def get_reading_header_metadata(filepath):
     """Extract clean (book_title, chapter) without author and without file extension."""
@@ -840,7 +837,7 @@ def main():
                         if state_before_quit in (STATE_READER, STATE_TOC):
                             write_save(current_filepath, current_page_idx, current_font_size)
                         running = False
-                    elif btn in (sdl2.SDL_CONTROLLER_BUTTON_A, sdl2.SDL_CONTROLLER_BUTTON_START): # Physical B or START (Cancel)
+                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B (Cancel)
                         state = state_before_quit
                 elif btn == sdl2.SDL_CONTROLLER_BUTTON_START:
                     state_before_quit = state
@@ -1402,13 +1399,10 @@ def main():
                     sdl2.SDL_RenderCopy(renderer.sdlrenderer, loaded_texture, None, dst_rect)
                 
                 if show_hud:
-                    # Top HUD: Tên sách - Chap đang đọc - Page (No author, no extension)
-                    book_title, chap_name = get_reading_header_metadata(current_filepath)
+                    # Top HUD: Tên file đầy đủ - Page
+                    book_title, _ = get_book_display_metadata(os.path.basename(current_filepath))
                     total_pages = len(book_pages)
-                    if chap_name:
-                        hud_top = f"{book_title} - {chap_name} - Page {current_page_idx + 1}/{total_pages}"
-                    else:
-                        hud_top = f"{book_title} - Page {current_page_idx + 1}/{total_pages}"
+                    hud_top = f"{book_title} - Page {current_page_idx + 1}/{total_pages}"
                     tex, tw, th = render_text(hud_top, font_small, theme["text"])
                     if tex:
                         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex, None, sdl2.SDL_Rect(20, 15, min(tw, reader_w-40), th))
@@ -1508,8 +1502,8 @@ def main():
                 pop_w, pop_h = 600, 200
                 pop_x, pop_y = (SCREEN_W - pop_w)//2, (SCREEN_H - pop_h)//2
                 
-                renderer.fill((pop_x, pop_y, pop_w, pop_h), theme["bg"])
-                renderer.fill((pop_x+2, pop_y+2, pop_w-4, pop_h-4), theme["header"])
+                renderer.fill((pop_x, pop_y, pop_w, pop_h), theme["sel"])
+                renderer.fill((pop_x+2, pop_y+2, pop_w-4, pop_h-4), theme["bg"])
                 
                 msg = "Exit RetroComics?"
                 sdlttf.TTF_SetFontStyle(font_large, sdlttf.TTF_STYLE_BOLD)
