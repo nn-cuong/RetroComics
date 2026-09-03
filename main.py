@@ -1250,9 +1250,6 @@ def main():
                         val = event.caxis.value
                         if val > 16000 and not r2_pressed:
                             r2_pressed = True
-                            state = STATE_PAGE_SELECT
-                            page_select_temp = current_page_idx
-                            needs_redraw = True
                         elif val < 8000:
                             r2_pressed = False
             if event.type == sdl2.SDL_QUIT:
@@ -1384,18 +1381,24 @@ def main():
                             min_zoom = min(vw / float(img_w), vh / float(img_h))
                             if zoom_level <= 0:
                                 zoom_level = vw / float(img_w)
-                            zoom_level = min(zoom_level * 1.2, min_zoom * 8.0)
+                            zoom_level = min(zoom_level * 1.25, min_zoom * 8.0)
+                            needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B: Zoom Out
                         vw, vh = get_reader_view_size()
                         if img_w > 0 and img_h > 0:
                             min_zoom = min(vw / float(img_w), vh / float(img_h))
                             fit_w = vw / float(img_w)
                             target_min = min(fit_w, min_zoom)
-                            if zoom_level > target_min + 0.05:
-                                zoom_level = max(zoom_level / 1.2, target_min)
-                                pan_x = 0
-                                pan_y = 0
-                                needs_redraw = True
+                            if zoom_level <= 0:
+                                zoom_level = fit_w
+                            zoom_level = max(zoom_level / 1.25, target_min * 0.5)
+                            scaled_w = int(img_w * zoom_level)
+                            scaled_h = int(img_h * zoom_level)
+                            max_pan_x = max(0, scaled_w - vw)
+                            max_pan_y = max(0, scaled_h - vh)
+                            pan_x = max(0, min(pan_x, max_pan_x))
+                            pan_y = max(0, min(pan_y, max_pan_y))
+                            needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_Y: # Physical X: Rotate
                         reader_rotation_idx = (reader_rotation_idx + 1) % 4
                         write_reader_rotation_idx(reader_rotation_idx)
@@ -1916,7 +1919,7 @@ def main():
                     sdl2.SDL_RenderFillRect(renderer.sdlrenderer, sdl2.SDL_Rect(0, reader_h - 48, reader_w, 1))
 
                     # Bottom HUD Text
-                    footer = f"L2/R2: Jump  |  L/R: Turn  |  Y: Zoom In  |  B: Zoom Out  |  X: Rotate  |  A: HUD  |  SELECT: LIB"
+                    footer = f"L2: Page Select  |  L1/R1: Prev/Next  |  Y: Zoom In  |  B: Zoom Out  |  X: Rotate  |  A: HUD  |  SELECT: LIB"
                     tex_bot, bw, bh = render_text(footer, font_small, hud_text_color)
                     if tex_bot:
                         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_bot, None, sdl2.SDL_Rect(24, reader_h - 48 + (48 - bh) // 2, min(bw, reader_w - 48), bh))
