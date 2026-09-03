@@ -1153,7 +1153,7 @@ def main():
             if abs(rx) < 10000 and abs(ry) < 10000:
                 right_axis_held = False
             elif state in (STATE_READER, STATE_PAGE_SELECT):
-                if not right_axis_held or (current_ticks - last_right_axis_time > 220):
+                if not right_axis_held or (current_ticks - last_right_axis_time > 100):
                     if abs(rx) >= 15000 and abs(rx) > abs(ry):
                         if state == STATE_READER:
                             if rx > 0: # Right -> Next Page (like R1)
@@ -1180,6 +1180,7 @@ def main():
                                 needs_redraw = True
                         right_axis_held = True
                         last_right_axis_time = current_ticks
+                        break
                     elif abs(ry) >= 15000 and abs(ry) >= abs(rx):
                         if state == STATE_READER:
                             state = STATE_PAGE_SELECT
@@ -1195,6 +1196,7 @@ def main():
                                 needs_redraw = True
                         right_axis_held = True
                         last_right_axis_time = current_ticks
+                        break
 
             # Left Stick controls pan in Comic Reader, or adjust page in Page Select
             if abs(lx) < 10000 and abs(ly) < 10000:
@@ -1210,7 +1212,7 @@ def main():
                     break
             elif state == STATE_PAGE_SELECT:
                 total_p = len(book_pages) if book_pages else 1
-                if not left_axis_held or (current_ticks - last_left_axis_time > 220):
+                if not left_axis_held or (current_ticks - last_left_axis_time > 100):
                     if abs(ly) >= 15000 and abs(ly) >= abs(lx):
                         if ly < 0: # Up -> Row Up (-5)
                             page_select_temp = max(0, page_select_temp - 5)
