@@ -205,8 +205,62 @@ class ComicThumbManager:
             self._threads.append(t)
 
     def _disk_path(self, fp, p_idx):
-        h = hashlib.sha1(f"{fp}:{p_idx}".encode("utf-8", errors="replace")).hexdigest()[:20]
-        return os.path.join(self.cache_dir, f"{h}.bmp")
+        book_h = hashlib.sha1(fp.encode("utf-8", errors="replace")).hexdigest()[:12]
+        page_h = hashlib.sha1(str(p_idx).encode("utf-8")).hexdigest()[:8]
+        return os.path.join(self.cache_dir, f"{book_h}_{page_h}.bmp")
+
+    def cleanup_cache(self, keep_recent_books=3, max_age_days=5):
+        """
+        Background cleanup of thumb cache:
+        1. Keep only thumbnails belonging to the last `keep_recent_books` read books.
+        2. Delete any thumbnail older than `max_age_days` (default 5 days).
+        """
+        def _bg_cleanup():
+            import time
+            try:
+                if not os.path.exists(self.cache_dir):
+                    return
+                from storage import get_recent_books
+                recent_books = get_recent_books(limit=keep_recent_books)
+                valid_prefixes = {
+                    hashlib.sha1(b.encode("utf-8", errors="replace")).hexdigest()[:12]
+                    for b in recent_books if b
+                }
+                
+                max_age_sec = max_age_days * 86400
+                now = time.time()
+                
+                for fname in os.listdir(self.cache_dir):
+                    if not fname.endswith(".bmp"):
+                        continue
+                    fpath = os.path.join(self.cache_dir, fname)
+                    try:
+                        # Check book prefix
+                        prefix = fname.split("_")[0] if "_" in fname else None
+                        
+                        # Rule 1: Delete if not among recent books (if we have recent book history)
+                        if valid_prefixes and prefix and prefix not in valid_prefixes:
+                            try:
+                                os.remove(fpath)
+                            except Exception:
+                                pass
+                            continue
+
+                        # Rule 2: Delete if older than max_age_days
+                        mtime = os.path.getmtime(fpath)
+                        # Sanity check if clock is at least after 2020
+                        if now > 1600000000 and (now - mtime) > max_age_sec:
+                            try:
+                                os.remove(fpath)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception as e:
+                log_debug(f"cleanup_cache error: {e}")
+
+        t = threading.Thread(target=_bg_cleanup, daemon=True, name="ThumbCleanupWorker")
+        t.start()
 
     def _worker(self):
         while self.running[0]:

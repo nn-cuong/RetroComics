@@ -5,6 +5,8 @@ from constants import THEMES
 SAVES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "comic_saves.json")
 SETTINGS_KEY = "__retrocomics_settings__"
 
+import time
+
 def load_save(filepath):
     try:
         with open(SAVES_FILE, 'r', encoding='utf-8') as f:
@@ -19,11 +21,29 @@ def write_save(filepath, scroll_y, font_size=34, view_mode=0):
         if os.path.exists(SAVES_FILE):
             with open(SAVES_FILE, 'r', encoding='utf-8') as f:
                 saves = json.load(f)
-        saves[filepath] = {"scroll_y": scroll_y, "font_size": font_size, "view_mode": view_mode}
+        prev = saves.get(filepath, {})
+        saves[filepath] = {
+            "scroll_y": scroll_y,
+            "font_size": font_size,
+            "view_mode": view_mode,
+            "last_read": time.time()
+        }
         with open(SAVES_FILE, 'w', encoding='utf-8') as f:
             json.dump(saves, f)
     except Exception:
         pass
+
+def get_recent_books(limit=3):
+    try:
+        if not os.path.exists(SAVES_FILE):
+            return []
+        with open(SAVES_FILE, 'r', encoding='utf-8') as f:
+            saves = json.load(f)
+        books = [(k, v.get("last_read", 0)) for k, v in saves.items() if k != SETTINGS_KEY and isinstance(v, dict)]
+        books.sort(key=lambda x: x[1], reverse=True)
+        return [b[0] for b in books[:limit]]
+    except Exception:
+        return []
 
 def load_settings():
     try:

@@ -255,6 +255,7 @@ def main():
         pan_y = int(round(pan_fy))
 
     comic_thumb_manager = ComicThumbManager()
+    comic_thumb_manager.cleanup_cache(keep_recent_books=3, max_age_days=5)
 
 
 
@@ -611,6 +612,7 @@ def main():
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # SELECT: Exit
                         write_save(current_filepath, current_page_idx, current_font_size)
                         ComicArchive.close_active()
+                        comic_thumb_manager.cleanup_cache(keep_recent_books=3, max_age_days=5)
                         state = STATE_BROWSE
                         needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A: Toggle HUD
@@ -636,6 +638,7 @@ def main():
                         write_save(current_filepath, current_page_idx, current_font_size)
                         ComicArchive.close_active()
                         comic_thumb_manager.clear()
+                        comic_thumb_manager.cleanup_cache(keep_recent_books=3, max_age_days=5)
                         state = STATE_BROWSE
                         needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y: Snap to Current Reading Page
