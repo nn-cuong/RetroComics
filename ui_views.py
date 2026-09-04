@@ -412,7 +412,7 @@ def draw_page_select_view(
     renderer.fill((0, SCREEN_H - 50, SCREEN_W, 50), lib_t["header"])
     renderer.fill((0, SCREEN_H - 50, SCREEN_W, 1), lib_t["divider"])
     
-    footer_hint = "D-Pad / Sticks: Move   |   Y: Current Page   |   A: Jump to Page   |   B: Cancel"
+    footer_hint = "DPAD / Sticks: Move   |   Y: Current Page   |   A: Jump to Page   |   B: Cancel"
     tex_foot, fw, fh = render_text(footer_hint, font_small, lib_t["secondary"])
     if tex_foot:
         sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_foot, None, sdl2.SDL_Rect((SCREEN_W - fw)//2, SCREEN_H - 50 + (50 - fh)//2, fw, fh))
