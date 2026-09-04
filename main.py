@@ -8,7 +8,7 @@ import threading
 
 from constants import (
     SCREEN_W, SCREEN_H,
-    STATE_BROWSE, STATE_READER, STATE_TOC, STATE_QUIT_CONFIRM, STATE_PAGE_SELECT, STATE_ABOUT,
+    STATE_BROWSE, STATE_READER, STATE_QUIT_CONFIRM, STATE_PAGE_SELECT, STATE_ABOUT,
     VALID_EXTS, VALID_EXTS_SET,
     THEMES, LIBRARY_THEMES, natural_sort_key
 )
@@ -31,8 +31,7 @@ from ui_views import (
     draw_book_icon,
     draw_browse_view,
     draw_comic_reader_view,
-    draw_page_select_view,
-    get_reading_header_metadata
+    draw_page_select_view
 )
 
 from ui_dialogs import (
@@ -411,13 +410,13 @@ def main():
                             l2_pressed = False
                             r2_pressed = False
             if event.type == sdl2.SDL_QUIT:
-                if state in (STATE_READER, STATE_TOC):
+                if state in (STATE_READER, STATE_PAGE_SELECT):
                     write_save(current_filepath, current_page_idx, current_font_size)
                 running = False
             elif event.type == sdl2.SDL_KEYDOWN:
                 if event.key.keysym.sym == sdl2.SDLK_ESCAPE:
-                    if state in (STATE_READER, STATE_TOC):
-                        write_save(current_filepath, reader_scroll_y, current_font_size)
+                    if state in (STATE_READER, STATE_PAGE_SELECT):
+                        write_save(current_filepath, current_page_idx, current_font_size)
                     running = False
                     
             elif event.type == sdl2.SDL_CONTROLLERBUTTONUP:
@@ -447,7 +446,7 @@ def main():
 
                 if state == STATE_QUIT_CONFIRM:
                     if btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A (Confirm)
-                        if state_before_quit in (STATE_READER, STATE_TOC):
+                        if state_before_quit in (STATE_READER, STATE_PAGE_SELECT):
                             write_save(current_filepath, current_page_idx, current_font_size)
                         running = False
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B (Cancel)
@@ -597,13 +596,7 @@ def main():
                         page_select_temp = min(total_p - 1, page_select_temp + 10)
                         needs_redraw = True
                         
-                elif state == STATE_TOC:
-                    if btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A - Select chapter
-                        if len(chapter_offsets) > 0:
-                            reader_scroll_y = chapter_offsets[toc_sel_index][1]
-                        state = STATE_READER
-                    elif btn == sdl2.SDL_CONTROLLER_BUTTON_A or btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # Physical B or Select - Back to Reader
-                        state = STATE_READER
+
 
         # Key repeat logic for library and comic TOC (exact Files app behavior)
         if state in (STATE_BROWSE, STATE_PAGE_SELECT):
@@ -711,21 +704,7 @@ def main():
                 sel_time = current_ticks
                 prev_sel_index = sel_index
 
-        elif state == STATE_TOC:
-            if is_up:
-                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
-                    if len(chapter_offsets) > 0:
-                        toc_sel_index = (toc_sel_index - 1) % len(chapter_offsets)
-                    needs_redraw = True
-                dpad_timer += 1
-            elif is_down:
-                if dpad_timer == 0 or (dpad_timer > 15 and dpad_timer % 3 == 0):
-                    if len(chapter_offsets) > 0:
-                        toc_sel_index = (toc_sel_index + 1) % len(chapter_offsets)
-                    needs_redraw = True
-                dpad_timer += 1
-            else:
-                dpad_timer = 0
+
         elif state == STATE_PAGE_SELECT:
             total_p = len(book_pages) if book_pages else 1
             if is_up:
