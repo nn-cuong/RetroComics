@@ -180,6 +180,8 @@ def main():
     zoom_level = -1.0 # -1.0 means auto fit width initially
     pan_x = 0
     pan_y = 0
+    pan_fx = 0.0
+    pan_fy = 0.0
     loaded_texture = None
     loaded_page_idx = -1
     img_w = 0
@@ -223,7 +225,7 @@ def main():
         return dx, dy
 
     def handle_reader_direction(dx, dy, pan_step=None):
-        nonlocal pan_x, pan_y, zoom_level, img_h, img_w
+        nonlocal pan_x, pan_y, pan_fx, pan_fy, zoom_level, img_h, img_w
         dx, dy = rotate_reader_direction(dx, dy)
         vw, vh = get_reader_view_size()
         
@@ -233,26 +235,27 @@ def main():
         scaled_w = int(img_w * zoom_level)
         scaled_h = int(img_h * zoom_level)
         
-        step = 60 if pan_step is None else pan_step
+        step = 60.0 if pan_step is None else float(pan_step)
         
         if dx != 0:
-            pan_x += dx * step
+            pan_fx += float(dx) * step
         if dy != 0:
-            pan_y += dy * step
+            pan_fy += float(dy) * step
             
-        # Clamp pan_x
-        max_pan_x = max(0, scaled_w - vw)
-        pan_x = max(0, min(pan_x, max_pan_x))
-        # Clamp pan_y
-        max_pan_y = max(0, scaled_h - vh)
-        pan_y = max(0, min(pan_y, max_pan_y))
+        # Clamp pan_fx & pan_fy
+        max_pan_x = float(max(0, scaled_w - vw))
+        pan_fx = max(0.0, min(pan_fx, max_pan_x))
+        max_pan_y = float(max(0, scaled_h - vh))
+        pan_fy = max(0.0, min(pan_fy, max_pan_y))
+        pan_x = int(round(pan_fx))
+        pan_y = int(round(pan_fy))
 
     comic_thumb_manager = ComicThumbManager()
 
 
 
     def load_book(filepath):
-        nonlocal book_pages, current_page_idx, pan_x, pan_y, zoom_level, current_font_size, current_filepath, loaded_page_idx, loaded_texture
+        nonlocal book_pages, current_page_idx, pan_x, pan_y, pan_fx, pan_fy, zoom_level, current_font_size, current_filepath, loaded_page_idx, loaded_texture
         book_pages = []
         loaded_page_idx = -1
         comic_thumb_manager.clear()
@@ -266,6 +269,8 @@ def main():
         zoom_level = -1.0
         pan_x = 0
         pan_y = 0
+        pan_fx = 0.0
+        pan_fy = 0.0
         current_filepath = filepath
         
         try:
@@ -289,6 +294,7 @@ def main():
     right_axis_held = False
     last_left_axis_time = 0
     left_axis_held = False
+    last_pan_ticks = 0
     show_hud = True
     
     while running:
@@ -354,24 +360,33 @@ def main():
                         last_right_axis_time = current_ticks
                         break
 
-            # Left Stick controls pan in Comic Reader
+            # Left Stick controls pan in Comic Reader (Smooth, 60fps frame-paced analog panning)
             if abs(lx) < 12000 and abs(ly) < 12000:
                 left_axis_held = False
+                last_pan_ticks = 0
             if state == STATE_READER:
                 if abs(lx) >= 12000 or abs(ly) >= 12000:
-                    if not left_axis_held or (current_ticks - last_axis_scroll > 20):
-                        if abs(lx) >= 12000:
-                            norm_x = min(1.0, max(0.0, (abs(lx) - 12000) / 20767.0))
-                            speed_x = max(4, int(6 + 18 * norm_x))
-                            handle_reader_direction(1 if lx > 0 else -1, 0, pan_step=speed_x)
-                        if abs(ly) >= 12000:
-                            norm_y = min(1.0, max(0.0, (abs(ly) - 12000) / 20767.0))
-                            speed_y = max(4, int(6 + 18 * norm_y))
-                            handle_reader_direction(0, 1 if ly > 0 else -1, pan_step=speed_y)
-                        last_axis_scroll = current_ticks
-                        left_axis_held = True
+                    dt = 0.016
+                    if left_axis_held and last_pan_ticks > 0:
+                        elapsed_ms = current_ticks - last_pan_ticks
+                        if 0 < elapsed_ms < 100:
+                            dt = elapsed_ms / 1000.0
+                    last_pan_ticks = current_ticks
+                    left_axis_held = True
+
+                    old_px, old_py = pan_x, pan_y
+                    if abs(lx) >= 12000:
+                        norm_x = min(1.0, max(0.0, (abs(lx) - 12000) / 20767.0))
+                        vel_x = 350.0 + 1050.0 * norm_x
+                        pdx = 1 if lx > 0 else -1
+                        handle_reader_direction(pdx, 0, pan_step=vel_x * dt)
+                    if abs(ly) >= 12000:
+                        norm_y = min(1.0, max(0.0, (abs(ly) - 12000) / 20767.0))
+                        vel_y = 350.0 + 1050.0 * norm_y
+                        pdy = 1 if ly > 0 else -1
+                        handle_reader_direction(0, pdy, pan_step=vel_y * dt)
+                    if pan_x != old_px or pan_y != old_py:
                         needs_redraw = True
-                        break
                     
         for event in events:
             if event.type == sdl2.SDL_CONTROLLERAXISMOTION:

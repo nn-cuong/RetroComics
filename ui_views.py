@@ -258,7 +258,9 @@ def draw_comic_reader_view(
     reader_rotation_idx, font_small, render_text
 ):
     """Draws comic page with zoom, panning, rotation, and high-contrast HUD matching RetroReader."""
-    sdl2.SDL_SetRenderTarget(renderer.sdlrenderer, target)
+    drawing_rotated = (reader_rotation_idx != 0)
+    draw_target = target if drawing_rotated else None
+    sdl2.SDL_SetRenderTarget(renderer.sdlrenderer, draw_target)
     renderer.clear(theme["bg"])
 
     if loaded_comic_texture:
@@ -306,7 +308,6 @@ def draw_comic_reader_view(
             sdl2.SDL_RenderCopy(renderer.sdlrenderer, tex_bot, None, sdl2.SDL_Rect(24, reader_h - 48 + (48 - bh) // 2, min(bw, reader_w - 48), bh))
             sdl2.SDL_DestroyTexture(tex_bot)
 
-    drawing_rotated = (reader_rotation_idx != 0)
     if drawing_rotated:
         reader_angle = 0
         rot = reader_rotation_idx % 4
@@ -319,11 +320,6 @@ def draw_comic_reader_view(
         center_x, center_y = SCREEN_W // 2, SCREEN_H // 2
         dst_rect = sdl2.SDL_Rect(center_x - reader_w // 2, center_y - reader_h // 2, reader_w, reader_h)
         sdl2.SDL_RenderCopyEx(renderer.sdlrenderer, target, src_rect, dst_rect, float(reader_angle), None, sdl2.SDL_FLIP_NONE)
-    else:
-        sdl2.SDL_SetRenderTarget(renderer.sdlrenderer, None)
-        sdl2.SDL_RenderClear(renderer.sdlrenderer)
-        src_rect = sdl2.SDL_Rect(0, 0, SCREEN_W, SCREEN_H)
-        sdl2.SDL_RenderCopy(renderer.sdlrenderer, target, src_rect, src_rect)
 
 
 def draw_page_select_view(
