@@ -226,6 +226,10 @@ def main():
 
     def handle_reader_direction(dx, dy, pan_step=None):
         nonlocal pan_x, pan_y, pan_fx, pan_fy, zoom_level, img_h, img_w
+        if abs(pan_fx - pan_x) > 1.0:
+            pan_fx = float(pan_x)
+        if abs(pan_fy - pan_y) > 1.0:
+            pan_fy = float(pan_y)
         dx, dy = rotate_reader_direction(dx, dy)
         vw, vh = get_reader_view_size()
         
@@ -307,86 +311,96 @@ def main():
         axis_down = False
         axis_left = False
         axis_right = False
+        lx, ly, rx, ry = 0, 0, 0, 0
         for c in controllers:
-            lx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTX)
-            ly = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTY)
-            rx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTX)
-            ry = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTY)
-            ax = lx if abs(lx) >= abs(rx) else rx
-            ay = ly if abs(ly) >= abs(ry) else ry
-            if ay < -15000:
-                axis_up = True
-            elif ay > 15000:
-                axis_down = True
-            if ax < -15000:
-                axis_left = True
-            elif ax > 15000:
-                axis_right = True
+            clx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTX)
+            cly = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_LEFTY)
+            crx = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTX)
+            cry = sdl2.SDL_GameControllerGetAxis(c, sdl2.SDL_CONTROLLER_AXIS_RIGHTY)
+            if abs(clx) > abs(lx): lx = clx
+            if abs(cly) > abs(ly): ly = cly
+            if abs(crx) > abs(rx): rx = crx
+            if abs(cry) > abs(ry): ry = cry
 
-            # Right Stick dedicated controls for Comic Reader
-            if abs(rx) < 10000 and abs(ry) < 10000:
-                right_axis_held = False
-            elif state == STATE_READER:
-                if not right_axis_held or (current_ticks - last_right_axis_time > 100):
-                    if abs(rx) >= 15000 and abs(rx) > abs(ry):
-                        if rx > 0: # Right -> Next Page (like R1)
-                            if book_pages and current_page_idx < len(book_pages) - 1:
-                                current_page_idx += 1
-                                zoom_level = -1.0
-                                pan_x = 0
-                                pan_y = 0
-                                needs_redraw = True
-                        else: # Left -> Prev Page (like L1)
-                            if current_page_idx > 0:
-                                current_page_idx -= 1
-                                zoom_level = -1.0
-                                pan_x = 0
-                                pan_y = 0
-                                needs_redraw = True
-                        right_axis_held = True
-                        last_right_axis_time = current_ticks
-                        break
-                    elif abs(ry) >= 15000 and abs(ry) >= abs(rx):
-                        state = STATE_PAGE_SELECT
-                        page_select_temp = current_page_idx
-                        dpad_timer = 0
-                        dpad_horiz_timer = 0
-                        dpad_up_held = False
-                        dpad_down_held = False
-                        dpad_left_held = False
-                        dpad_right_held = False
-                        needs_redraw = True
-                        right_axis_held = True
-                        last_right_axis_time = current_ticks
-                        break
+        ax = lx if abs(lx) >= abs(rx) else rx
+        ay = ly if abs(ly) >= abs(ry) else ry
+        if ay < -15000:
+            axis_up = True
+        elif ay > 15000:
+            axis_down = True
+        if ax < -15000:
+            axis_left = True
+        elif ax > 15000:
+            axis_right = True
 
-            # Left Stick controls pan in Comic Reader (Smooth, 60fps frame-paced analog panning)
+        # Right Stick dedicated controls for Comic Reader
+        if abs(rx) < 10000 and abs(ry) < 10000:
+            right_axis_held = False
+        elif state == STATE_READER:
+            if not right_axis_held or (current_ticks - last_right_axis_time > 100):
+                if abs(rx) >= 15000 and abs(rx) > abs(ry):
+                    if rx > 0: # Right -> Next Page (like R1)
+                        if book_pages and current_page_idx < len(book_pages) - 1:
+                            current_page_idx += 1
+                            zoom_level = -1.0
+                            pan_x = 0
+                            pan_y = 0
+                            pan_fx = 0.0
+                            pan_fy = 0.0
+                            needs_redraw = True
+                    else: # Left -> Prev Page (like L1)
+                        if current_page_idx > 0:
+                            current_page_idx -= 1
+                            zoom_level = -1.0
+                            pan_x = 0
+                            pan_y = 0
+                            pan_fx = 0.0
+                            pan_fy = 0.0
+                            needs_redraw = True
+                    right_axis_held = True
+                    last_right_axis_time = current_ticks
+                elif abs(ry) >= 15000 and abs(ry) >= abs(rx):
+                    state = STATE_PAGE_SELECT
+                    page_select_temp = current_page_idx
+                    dpad_timer = 0
+                    dpad_horiz_timer = 0
+                    dpad_up_held = False
+                    dpad_down_held = False
+                    dpad_left_held = False
+                    dpad_right_held = False
+                    needs_redraw = True
+                    right_axis_held = True
+                    last_right_axis_time = current_ticks
+
+        # Left Stick controls pan in Comic Reader (Smooth, 60fps frame-paced analog panning)
+        if state == STATE_READER:
             if abs(lx) < 12000 and abs(ly) < 12000:
                 left_axis_held = False
                 last_pan_ticks = 0
-            if state == STATE_READER:
-                if abs(lx) >= 12000 or abs(ly) >= 12000:
-                    dt = 0.016
-                    if left_axis_held and last_pan_ticks > 0:
-                        elapsed_ms = current_ticks - last_pan_ticks
-                        if 0 < elapsed_ms < 100:
-                            dt = elapsed_ms / 1000.0
-                    last_pan_ticks = current_ticks
-                    left_axis_held = True
+            else:
+                dt = 0.016
+                if left_axis_held and last_pan_ticks > 0:
+                    elapsed_ms = current_ticks - last_pan_ticks
+                    if 0 < elapsed_ms < 100:
+                        dt = elapsed_ms / 1000.0
+                last_pan_ticks = current_ticks
+                left_axis_held = True
 
-                    old_px, old_py = pan_x, pan_y
-                    if abs(lx) >= 12000:
-                        norm_x = min(1.0, max(0.0, (abs(lx) - 12000) / 20767.0))
-                        vel_x = 350.0 + 1050.0 * norm_x
-                        pdx = 1 if lx > 0 else -1
-                        handle_reader_direction(pdx, 0, pan_step=vel_x * dt)
-                    if abs(ly) >= 12000:
-                        norm_y = min(1.0, max(0.0, (abs(ly) - 12000) / 20767.0))
-                        vel_y = 350.0 + 1050.0 * norm_y
-                        pdy = 1 if ly > 0 else -1
-                        handle_reader_direction(0, pdy, pan_step=vel_y * dt)
-                    if pan_x != old_px or pan_y != old_py:
-                        needs_redraw = True
+                old_px, old_py = pan_x, pan_y
+                if abs(lx) >= 12000:
+                    norm_x = min(1.0, max(0.0, (abs(lx) - 12000) / 20767.0))
+                    curve_x = norm_x * norm_x
+                    vel_x = 100.0 + 550.0 * curve_x
+                    pdx = 1 if lx > 0 else -1
+                    handle_reader_direction(pdx, 0, pan_step=min(25.0, vel_x * dt))
+                if abs(ly) >= 12000:
+                    norm_y = min(1.0, max(0.0, (abs(ly) - 12000) / 20767.0))
+                    curve_y = norm_y * norm_y
+                    vel_y = 100.0 + 550.0 * curve_y
+                    pdy = 1 if ly > 0 else -1
+                    handle_reader_direction(0, pdy, pan_step=min(25.0, vel_y * dt))
+                if pan_x != old_px or pan_y != old_py:
+                    needs_redraw = True
                     
         for event in events:
             if event.type == sdl2.SDL_CONTROLLERAXISMOTION:
@@ -542,11 +556,17 @@ def main():
                         zoom_level = -1.0
                         pan_x = 0
                         pan_y = 0
+                        pan_fx = 0.0
+                        pan_fy = 0.0
+                        needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: # R1: Next Page
                         current_page_idx = min(len(book_pages) - 1, current_page_idx + 1)
                         zoom_level = -1.0
                         pan_x = 0
                         pan_y = 0
+                        pan_fx = 0.0
+                        pan_fy = 0.0
+                        needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_X: # Physical Y: Zoom In
                         vw, vh = get_reader_view_size()
                         if img_w > 0 and img_h > 0:
@@ -554,6 +574,14 @@ def main():
                             if zoom_level <= 0:
                                 zoom_level = vw / float(img_w)
                             zoom_level = min(zoom_level * 1.25, fit_page * 8.0)
+                            scaled_w = int(img_w * zoom_level)
+                            scaled_h = int(img_h * zoom_level)
+                            max_pan_x = max(0, scaled_w - vw)
+                            max_pan_y = max(0, scaled_h - vh)
+                            pan_x = max(0, min(pan_x, max_pan_x))
+                            pan_y = max(0, min(pan_y, max_pan_y))
+                            pan_fx = float(pan_x)
+                            pan_fy = float(pan_y)
                             needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_A: # Physical B: Zoom Out (until fit 2 edges)
                         vw, vh = get_reader_view_size()
@@ -568,6 +596,8 @@ def main():
                             max_pan_y = max(0, scaled_h - vh)
                             pan_x = max(0, min(pan_x, max_pan_x))
                             pan_y = max(0, min(pan_y, max_pan_y))
+                            pan_fx = float(pan_x)
+                            pan_fy = float(pan_y)
                             needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_Y: # Physical X: Rotate
                         reader_rotation_idx = (reader_rotation_idx + 1) % 4
@@ -575,6 +605,9 @@ def main():
                         zoom_level = -1.0 # reset zoom
                         pan_x = 0
                         pan_y = 0
+                        pan_fx = 0.0
+                        pan_fy = 0.0
+                        needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # SELECT: Exit
                         write_save(current_filepath, current_page_idx, current_font_size)
                         state = STATE_BROWSE
@@ -588,6 +621,8 @@ def main():
                         zoom_level = -1.0
                         pan_x = 0
                         pan_y = 0
+                        pan_fx = 0.0
+                        pan_fy = 0.0
                         state = STATE_READER
                         comic_thumb_manager.clear()
                         needs_redraw = True
@@ -794,6 +829,8 @@ def main():
                         loaded_page_idx = current_page_idx
                         pan_x = 0
                         pan_y = 0
+                        pan_fx = 0.0
+                        pan_fy = 0.0
                 draw_comic_reader_view(
                     renderer, theme, target, reader_w, reader_h, loaded_texture,
                     img_w, img_h, zoom_level, pan_x, pan_y, show_hud, current_filepath,
