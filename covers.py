@@ -209,11 +209,11 @@ class ComicThumbManager:
         page_h = hashlib.sha1(str(p_idx).encode("utf-8")).hexdigest()[:8]
         return os.path.join(self.cache_dir, f"{book_h}_{page_h}.bmp")
 
-    def cleanup_cache(self, keep_recent_books=3, max_age_days=5):
+    def cleanup_cache(self, keep_recent_books=5, max_age_days=10):
         """
         Background cleanup of thumb cache:
-        1. Keep only thumbnails belonging to the last `keep_recent_books` read books.
-        2. Delete any thumbnail older than `max_age_days` (default 5 days).
+        1. Keep only thumbnails belonging to the last `keep_recent_books` read books (default 5).
+        2. Delete any thumbnail older than `max_age_days` (default 10 days).
         """
         def _bg_cleanup():
             import time
