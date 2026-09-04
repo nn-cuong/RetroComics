@@ -28,6 +28,49 @@ def bitmap_to_bmp(raw_bytes, width, height, bpp=32):
     dib_header = struct.pack('<IiiHHIIiiII', 40, width, -height, 1, bpp, 0, len(raw_bytes), 2835, 2835, 0, 0)
     return bmp_header + dib_header + raw_bytes
 
+class ComicPrefetcher:
+    def __init__(self):
+        self._queue = []
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        self._worker_thread = threading.Thread(target=self._worker, daemon=True, name="ComicPrefetchWorker")
+        self._worker_thread.start()
+
+    def request_prefetch(self, filepath, page_names):
+        with self._lock:
+            # Replace pending tasks with latest targets
+            self._queue = [(filepath, p) for p in page_names if p]
+            if self._queue:
+                self._event.set()
+
+    def clear(self):
+        with self._lock:
+            self._queue.clear()
+            self._event.clear()
+
+    def _worker(self):
+        import time
+        while True:
+            self._event.wait()
+            item = None
+            with self._lock:
+                if self._queue:
+                    item = self._queue.pop(0)
+                else:
+                    self._event.clear()
+            if item:
+                filepath, page_name = item
+                try:
+                    cache_key = (filepath, page_name)
+                    with ComicArchive._archive_lock:
+                        already_cached = (cache_key in ComicArchive._page_cache)
+                        is_active = (ComicArchive._active_filepath == filepath)
+                    if not already_cached and is_active:
+                        ComicArchive.read_image_data(filepath, page_name, is_thumb=False)
+                except Exception as e:
+                    log_debug(f"prefetch error {page_name}: {e}")
+                time.sleep(0.01)
+
 class ComicArchive:
     _active_filepath = None
     _active_pdf = None
@@ -35,10 +78,23 @@ class ComicArchive:
     _page_cache = {} # (filepath, page_filename) -> bytes
     _MAX_CACHE_ITEMS = 6
     _archive_lock = threading.RLock()
+    _prefetcher = None
+
+    @classmethod
+    def get_prefetcher(cls):
+        if cls._prefetcher is None:
+            cls._prefetcher = ComicPrefetcher()
+        return cls._prefetcher
+
+    @classmethod
+    def prefetch_pages(cls, filepath, page_names):
+        cls.get_prefetcher().request_prefetch(filepath, page_names)
 
     @classmethod
     def close_active(cls):
         with cls._archive_lock:
+            if cls._prefetcher:
+                cls._prefetcher.clear()
             if cls._active_pdf:
                 try:
                     cls._active_pdf.close()
@@ -189,7 +245,12 @@ class ComicArchive:
         cache_key = (filepath, page_filename)
         with cls._archive_lock:
             if not is_thumb and cache_key in cls._page_cache:
-                return cls._page_cache[cache_key]
+                # Refresh LRU ordering
+                val = cls._page_cache.pop(cache_key)
+                cls._page_cache[cache_key] = val
+                return val
+            if not is_thumb:
+                cls._active_filepath = filepath
 
         ext = os.path.splitext(filepath)[1].lower()
 
@@ -233,15 +294,15 @@ class ComicArchive:
         # 1. Native ZIP / CBZ
         if ext in ('.zip', '.cbz'):
             try:
-                zf = cls.get_open_zip(filepath)
-                if zf is not None:
-                    data = zf.read(page_filename)
-                    with cls._archive_lock:
+                with cls._archive_lock:
+                    zf = cls.get_open_zip(filepath)
+                    if zf is not None:
+                        data = zf.read(page_filename)
                         if not is_thumb:
                             if len(cls._page_cache) >= cls._MAX_CACHE_ITEMS:
                                 cls._page_cache.pop(next(iter(cls._page_cache)))
                             cls._page_cache[cache_key] = data
-                    return data
+                        return data
             except Exception as e:
                 log_debug(f"ZIP read error: {e}")
 

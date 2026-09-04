@@ -70,7 +70,7 @@ class CoverManager:
                 try:
                     pages = ComicArchive.get_pages(filepath)
                     if pages:
-                        img_data = ComicArchive.read_image_data(filepath, pages[0])
+                        img_data = ComicArchive.read_image_data(filepath, pages[0], is_thumb=True)
                 except Exception as e:
                     log_debug(f"cover worker error '{filepath}': {e}")
             if not img_data:

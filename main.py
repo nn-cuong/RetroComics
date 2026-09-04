@@ -610,7 +610,9 @@ def main():
                         needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_BACK: # SELECT: Exit
                         write_save(current_filepath, current_page_idx, current_font_size)
+                        ComicArchive.close_active()
                         state = STATE_BROWSE
+                        needs_redraw = True
                     elif btn == sdl2.SDL_CONTROLLER_BUTTON_B: # Physical A: Toggle HUD
                         show_hud = not show_hud
                         
@@ -833,6 +835,17 @@ def main():
                         pan_y = 0
                         pan_fx = 0.0
                         pan_fy = 0.0
+
+                        # Proactively prefetch adjacent pages in background for instant flipping
+                        prefetch_targets = []
+                        if current_page_idx + 1 < len(book_pages):
+                            prefetch_targets.append(book_pages[current_page_idx + 1])
+                        if current_page_idx > 0:
+                            prefetch_targets.append(book_pages[current_page_idx - 1])
+                        if current_page_idx + 2 < len(book_pages):
+                            prefetch_targets.append(book_pages[current_page_idx + 2])
+                        if prefetch_targets:
+                            ComicArchive.prefetch_pages(current_filepath, prefetch_targets)
                 draw_comic_reader_view(
                     renderer, theme, target, reader_w, reader_h, loaded_texture,
                     img_w, img_h, zoom_level, pan_x, pan_y, show_hud, current_filepath,
