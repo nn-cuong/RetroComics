@@ -14,9 +14,16 @@ except ImportError:
 from comics import ComicArchive, log_debug
 
 
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_COVER_CACHE = os.path.join(APP_DIR, ".cache", "covers")
+DEFAULT_THUMB_CACHE = os.path.join(APP_DIR, ".cache", "thumbs")
+
+
 class CoverManager:
     """Fast Async Comic Cover System: background worker threads + disk cache."""
-    def __init__(self, cache_dir="/mnt/SDCARD/.cover_cache", num_threads=3):
+    def __init__(self, cache_dir=None, num_threads=3):
+        if cache_dir is None:
+            cache_dir = DEFAULT_COVER_CACHE
         self.cache_dir = cache_dir
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
@@ -175,7 +182,9 @@ class CoverManager:
 
 class ComicThumbManager:
     """Manages multithreaded priority thumbnails for comic pages with disk caching and LRU."""
-    def __init__(self, cache_dir="/mnt/SDCARD/.comic_thumb_cache", num_threads=2):
+    def __init__(self, cache_dir=None, num_threads=2):
+        if cache_dir is None:
+            cache_dir = DEFAULT_THUMB_CACHE
         self.cache_dir = cache_dir
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
