@@ -38,11 +38,26 @@ elif command -v python3 >/dev/null 2>&1; then
     export PYTHONPATH="$APP_DIR/vendor:$APP_DIR:$PYTHONPATH"
 fi
 
+# Cap CPU max frequency to 1008MHz (plenty for comics/manga, prevents thermal build-up)
+echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
+echo 408000 > /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq 2>/dev/null
+echo 1008000 > /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null
+
+restore_cpu() {
+    echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
+    echo 2000000 > /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null
+}
+trap restore_cpu EXIT INT TERM
+
 if [ -z "$PY" ]; then
     echo "Cannot find a valid Python3 interpreter" > "$APP_DIR/crash.log"
     exit 1
 fi
 
-exec "$PY" main.py > "$APP_DIR/crash.log" 2>&1
+"$PY" main.py > "$APP_DIR/crash.log" 2>&1
+EXIT_CODE=$?
+
+restore_cpu
+exit $EXIT_CODE
 
 

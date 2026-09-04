@@ -791,7 +791,9 @@ def main():
 
         cover_manager.pump_ready(renderer)  # promote background-loaded covers to GPU textures
         comic_thumb_manager.pump_ready(renderer)  # promote background-loaded thumbnails to GPU textures
+        did_render = False
         if needs_redraw:
+            did_render = True
             theme = THEMES[theme_idx]
             renderer.clear(theme["bg"])
             
@@ -852,7 +854,19 @@ def main():
             if marquee_active and render_state == STATE_BROWSE:
                 needs_redraw = True
             
-        sdl2.SDL_Delay(16)
+        # Dynamic power-saving sleep: 60 FPS (16ms) during interaction/motion, 30 FPS (30ms) during static reading
+        is_active = (
+            did_render
+            or needs_redraw
+            or bool(events)
+            or left_axis_held
+            or right_axis_held
+            or dpad_up_held
+            or dpad_down_held
+            or dpad_left_held
+            or dpad_right_held
+        )
+        sdl2.SDL_Delay(16 if is_active else 30)
 
     cover_manager.shutdown()
     comic_thumb_manager.shutdown()
