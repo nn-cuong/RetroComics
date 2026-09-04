@@ -125,25 +125,17 @@ class ComicArchive:
                         return [f"page_{i+1}" for i in range(count)]
                 except Exception as e:
                     log_debug(f"PDF get_pages pypdfium2 error: {e}")
+            # Option B: Scan PDF metadata
             try:
                 with open(filepath, 'rb') as f:
                     content = f.read(2 * 1024 * 1024)
                     match = re.findall(rb'/Count\s+(\d+)', content)
                     if match:
                         count = max(int(m) for m in match)
-                        return [f"page_{i+1}" for i in range(count)]
-            except Exception:
-                pass
-            mutool = "/usr/bin/mutool" if os.path.exists("/usr/bin/mutool") else os.path.join(BIN_DIR, "mutool")
-            if os.path.exists(mutool):
-                try:
-                    cmd = [mutool, "info", filepath]
-                    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
-                    m = re.search(r'Pages:\s+(\d+)', res.stdout)
-                    if m:
-                        return [f"page_{i+1}" for i in range(int(m.group(1)))]
-                except Exception:
-                    pass
+                        if count > 0:
+                            return [f"page_{i+1}" for i in range(count)]
+            except Exception as e:
+                log_debug(f"PDF get_pages scan error: {e}")
             return ["page_1"]
 
         # 1. Native ZIP / CBZ
@@ -204,31 +196,39 @@ class ComicArchive:
         # 0. Dedicated PDF Page Render
         if ext == '.pdf':
             try:
-                m = re.search(r'(\d+)', page_filename)
-                p_idx = (int(m.group(1)) - 1) if m else 0
+                page_num = int(page_filename.replace("page_", ""))
+            except Exception:
+                try:
+                    m = re.search(r'(\d+)', page_filename)
+                    page_num = int(m.group(1)) if m else 1
+                except Exception:
+                    page_num = 1
+
+            with cls._archive_lock:
                 pdf = cls.get_open_pdf(filepath)
                 if pdf is not None:
                     try:
-                        page = pdf[p_idx]
+                        page = pdf[page_num - 1]
                         pw, ph = page.get_size()
                         if is_thumb:
-                            scale = min(264.0 / pw, 372.0 / ph)
+                            scale = min(264.0 / max(1.0, pw), 372.0 / max(1.0, ph))
                         else:
-                            scale = min(1024.0 / pw, 768.0 / ph, 1.4)
-                        pix = page.render(scale=scale)
-                        raw_bytes = pix.buffer
-                        width, height = pix.width, pix.height
-                        bmp_data = bitmap_to_bmp(bytes(raw_bytes), width, height, bpp=32)
-                        with cls._archive_lock:
+                            scale = max(1.0, min(1.4, 1024.0 / max(1.0, pw)))
+                        bitmap = page.render(scale=scale, prefer_bgrx=True)
+                        raw_bytes = bytes(bitmap.buffer)
+                        w = bitmap.width
+                        h = bitmap.height
+                        bpp = bitmap.n_channels * 8
+                        if raw_bytes and w > 0 and h > 0:
+                            bmp_data = bitmap_to_bmp(raw_bytes, w, h, bpp)
                             if not is_thumb:
                                 if len(cls._page_cache) >= cls._MAX_CACHE_ITEMS:
                                     cls._page_cache.pop(next(iter(cls._page_cache)))
                                 cls._page_cache[cache_key] = bmp_data
-                        return bmp_data
+                            return bmp_data
                     except Exception as e:
-                        log_debug(f"PDF render pypdfium2 error: {e}")
-            except Exception as e:
-                log_debug(f"PDF outer handler error: {e}")
+                        import traceback
+                        log_debug(f"PDF render exception p{page_num}: {e}\n{traceback.format_exc()}")
 
         # 1. Native ZIP / CBZ
         if ext in ('.zip', '.cbz'):
